@@ -1,0 +1,49 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.region {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.region .hint {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.region .box {
+  position: fixed;
+  border: 2px solid #00ff66;
+  background: rgba(0, 255, 102, 0.08);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.region .box .dim {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  background: #00ff66;
+  color: #0b1710;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+}

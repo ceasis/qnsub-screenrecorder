@@ -1,0 +1,41 @@
+html, body, #root {
+  margin: 0; padding: 0;
+  width: 100vw; height: 100vh;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.countdown {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.circle {
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.75);
+  border: 6px solid #ff3b30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 60px rgba(0, 0, 0, 0.5);
+  animation: pulse 1s infinite;
+}
+
+.circle span {
+  font-size: 140px;
+  font-weight: 700;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
