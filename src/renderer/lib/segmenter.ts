@@ -1,45 +1,429 @@
-import { SelfieSegmentation, Results } from '@mediapipe/selfie_segmentation';
+// Person segmentation / matting pipeline.
+//
+// This module hides three different model backends behind a single
+// `WebcamSegmenter` interface so the compositor can swap between
+// segmentation and matting without changing its draw code.
+//
+// Quality ladder (low → high):
+//
+//   1. "selfie"     — MediaPipe Selfie Segmentation (legacy).
+//                     Binary person mask, low resolution, flickery edges.
+//                     Cheapest to run, safest fallback.
+//
+//   2. "multiclass" — MediaPipe Tasks ImageSegmenter with the
+//                     SelfieMulticlass model. Newer vendor model, same
+//                     runtime cost, meaningfully cleaner hair edges.
+//                     Still a binary mask — we post-process with the
+//                     same bilateral refinement as "selfie".
+//
+//   3. "rvm"        — Robust Video Matting via onnxruntime-web. Real
+//                     video matting: outputs a continuous per-pixel
+//                     alpha instead of a binary mask, so hair strands
+//                     get real semi-transparency. Recurrent network
+//                     → temporally stable. Needs a GPU and a model
+//                     file download; falls through on failure.
+//
+// All backends implement a tiny shared interface:
+//
+//   - `getMaskCanvas()`  — alpha-encoded person mask (the segmentation
+//     shape). Used for centroid tracking and for the bilateral refine
+//     pass in `composeSegmented`. RVM synthesises this from its alpha
+//     output so auto-center keeps working.
+//
+//   - `getMatted()`      — a fully-matted foreground canvas (person
+//     RGB + alpha). Only populated by the matting backend. When the
+//     compositor sees this, it skips the whole mask-refinement path
+//     and draws the matted canvas directly over the new background.
+
+import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
+import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
+import * as ort from 'onnxruntime-web';
+import { refineMaskGL } from './maskRefineGL';
 
 export type SegMode = 'none' | 'blur' | 'image';
+export type SegBackendId = 'selfie' | 'multiclass' | 'rvm';
 
-export class WebcamSegmenter {
+interface Backend {
+  readonly id: SegBackendId;
+  init(): Promise<void>;
+  process(video: HTMLVideoElement): Promise<void>;
+  getMaskCanvas(): HTMLCanvasElement | null;
+  getMatted(): HTMLCanvasElement | null;
+  close(): void;
+}
+
+// ============================================================
+// Backend 1 — MediaPipe Selfie Segmentation (legacy)
+// ============================================================
+
+class SelfieBackend implements Backend {
+  readonly id: SegBackendId = 'selfie';
   private seg: SelfieSegmentation | null = null;
-  private lastResults: Results | null = null;
   private ready = false;
+  private maskCanvas = document.createElement('canvas');
+  private haveMask = false;
 
   async init() {
     if (this.seg) return;
     this.seg = new SelfieSegmentation({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
     });
-    // selfieMode flips the mask horizontally; we draw the video un-flipped,
-    // so enabling it causes the cutout to drift opposite to head movement.
     this.seg.setOptions({ modelSelection: 1, selfieMode: false });
     this.seg.onResults((r) => {
-      this.lastResults = r;
+      const mask = r.segmentationMask as unknown as CanvasImageSource & { width: number; height: number };
+      if (!mask) return;
+      const w = mask.width || 256;
+      const h = mask.height || 256;
+      if (this.maskCanvas.width !== w || this.maskCanvas.height !== h) {
+        this.maskCanvas.width = w;
+        this.maskCanvas.height = h;
+      }
+      const ctx = this.maskCanvas.getContext('2d')!;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(mask, 0, 0, w, h);
+      this.haveMask = true;
     });
     await this.seg.initialize();
     this.ready = true;
   }
 
   async process(video: HTMLVideoElement) {
-    if (!this.ready || !this.seg) return null;
-    if (video.readyState < 2) return null;
+    if (!this.ready || !this.seg) return;
+    if (video.readyState < 2) return;
     await this.seg.send({ image: video });
-    return this.lastResults;
   }
 
+  getMaskCanvas() { return this.haveMask ? this.maskCanvas : null; }
+  getMatted() { return null; }
   close() {
-    this.seg?.close();
+    try { this.seg?.close(); } catch {}
     this.seg = null;
     this.ready = false;
   }
 }
 
-// Reusable scratch canvas for the smoothed mask. Kept module-scoped so we
-// don't reallocate it every frame and so the previous frame's mask can be
-// blended into the next one (temporal smoothing kills edge flicker).
-let maskCanvas: HTMLCanvasElement | null = null;
+// ============================================================
+// Backend 2 — MediaPipe Tasks ImageSegmenter (SelfieMulticlass)
+// ============================================================
+
+class MulticlassBackend implements Backend {
+  readonly id: SegBackendId = 'multiclass';
+  private seg: ImageSegmenter | null = null;
+  private ready = false;
+  private maskCanvas = document.createElement('canvas');
+  private haveMask = false;
+  private lastTs = 0;
+
+  async init() {
+    if (this.seg) return;
+    const fileset = await FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+    );
+    this.seg = await ImageSegmenter.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath:
+          'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite',
+        delegate: 'GPU'
+      },
+      runningMode: 'VIDEO',
+      outputCategoryMask: false,
+      outputConfidenceMasks: true
+    });
+    this.ready = true;
+  }
+
+  async process(video: HTMLVideoElement) {
+    if (!this.ready || !this.seg) return;
+    if (video.readyState < 2) return;
+    // segmentForVideo timestamps must be strictly increasing.
+    let ts = performance.now();
+    if (ts <= this.lastTs) ts = this.lastTs + 1;
+    this.lastTs = ts;
+    const result = this.seg.segmentForVideo(video, ts);
+    try {
+      const masks = result?.confidenceMasks;
+      if (!masks || masks.length === 0) return;
+      // Category 0 = background. Person alpha = 1 - bg confidence
+      // gives a soft-edge alpha mask the bilateral refine can clean.
+      const bg = masks[0];
+      const w = bg.width;
+      const h = bg.height;
+      const data = bg.getAsFloat32Array();
+      if (this.maskCanvas.width !== w || this.maskCanvas.height !== h) {
+        this.maskCanvas.width = w;
+        this.maskCanvas.height = h;
+      }
+      const ctx = this.maskCanvas.getContext('2d')!;
+      const img = ctx.createImageData(w, h);
+      for (let i = 0, j = 0; i < data.length; i++, j += 4) {
+        const person = 1 - data[i];
+        const a = person < 0 ? 0 : person > 1 ? 255 : (person * 255) | 0;
+        img.data[j] = 255;
+        img.data[j + 1] = 255;
+        img.data[j + 2] = 255;
+        img.data[j + 3] = a;
+      }
+      ctx.putImageData(img, 0, 0);
+      this.haveMask = true;
+    } finally {
+      try { result?.close(); } catch {}
+    }
+  }
+
+  getMaskCanvas() { return this.haveMask ? this.maskCanvas : null; }
+  getMatted() { return null; }
+  close() {
+    try { this.seg?.close(); } catch {}
+    this.seg = null;
+    this.ready = false;
+  }
+}
+
+// ============================================================
+// Backend 3 — Robust Video Matting (RVM) via onnxruntime-web
+// ============================================================
+//
+// Expected ONNX model: `rvm_mobilenetv3_fp32.onnx` (official export
+// from https://github.com/PeterL1n/RobustVideoMatting). You can drop
+// the file into `resources/` and point the URL below at it, or let
+// the default HuggingFace URL do the download on first use.
+//
+// Inputs:
+//   src:              (1, 3, H, W) float32 RGB in [0,1]
+//   r1i..r4i:         recurrent state, start as zero tensors
+//   downsample_ratio: float scalar (0.25 works well for webcam input)
+// Outputs:
+//   fgr:              (1, 3, H, W) matted foreground
+//   pha:              (1, 1, H, W) alpha
+//   r1o..r4o:         new recurrent state (feed back next frame)
+
+const RVM_MODEL_URL =
+  'https://huggingface.co/akhaliq/Robust-Video-Matting/resolve/main/rvm_mobilenetv3_fp32.onnx';
+
+class RvmBackend implements Backend {
+  readonly id: SegBackendId = 'rvm';
+  private session: ort.InferenceSession | null = null;
+  private ready = false;
+  private r1: ort.Tensor = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+  private r2: ort.Tensor = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+  private r3: ort.Tensor = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+  private r4: ort.Tensor = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+  private downsample: ort.Tensor = new ort.Tensor('float32', new Float32Array([0.25]), []);
+  // Working resolution. RVM scales to whatever you feed it, but webcam
+  // overlay is small on screen and this keeps inference around 30fps
+  // on integrated GPUs. Native 720p would bottleneck weaker hardware.
+  private readonly IN_W = 384;
+  private readonly IN_H = 224;
+  private rgbBuffer = new Float32Array(1 * 3 * this.IN_H * this.IN_W);
+  private inputCanvas = document.createElement('canvas');
+  private mattedCanvas = document.createElement('canvas');
+  private maskCanvas = document.createElement('canvas');
+  private haveMatted = false;
+
+  constructor() {
+    this.inputCanvas.width = this.IN_W;
+    this.inputCanvas.height = this.IN_H;
+    this.mattedCanvas.width = this.IN_W;
+    this.mattedCanvas.height = this.IN_H;
+    this.maskCanvas.width = this.IN_W;
+    this.maskCanvas.height = this.IN_H;
+  }
+
+  async init() {
+    if (this.session) return;
+    // Best-effort execution provider selection: webgpu first for
+    // modern Chromium, then webgl, then wasm as the universal fallback.
+    const eps: ('webgpu' | 'webgl' | 'wasm')[] = [];
+    // WebGPU detection (navigator.gpu) — feature-detect to avoid an
+    // InvalidArgument error on older browsers.
+    if (typeof (navigator as any).gpu !== 'undefined') eps.push('webgpu');
+    eps.push('webgl', 'wasm');
+    this.session = await ort.InferenceSession.create(RVM_MODEL_URL, {
+      executionProviders: eps,
+      graphOptimizationLevel: 'all'
+    });
+    this.ready = true;
+  }
+
+  async process(video: HTMLVideoElement) {
+    if (!this.ready || !this.session) return;
+    if (video.readyState < 2) return;
+    const { IN_W, IN_H } = this;
+    const ictx = this.inputCanvas.getContext('2d', { willReadFrequently: true })!;
+    ictx.drawImage(video, 0, 0, IN_W, IN_H);
+    const img = ictx.getImageData(0, 0, IN_W, IN_H);
+
+    // HWC uint8 → CHW float32 [0,1] for the ONNX tensor.
+    const rgb = this.rgbBuffer;
+    const n = IN_W * IN_H;
+    const src = img.data;
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      rgb[i] = src[p] / 255;
+      rgb[i + n] = src[p + 1] / 255;
+      rgb[i + 2 * n] = src[p + 2] / 255;
+    }
+
+    const srcTensor = new ort.Tensor('float32', rgb, [1, 3, IN_H, IN_W]);
+    const feeds: Record<string, ort.Tensor> = {
+      src: srcTensor,
+      r1i: this.r1,
+      r2i: this.r2,
+      r3i: this.r3,
+      r4i: this.r4,
+      downsample_ratio: this.downsample
+    };
+
+    let results: ort.InferenceSession.OnnxValueMapType;
+    try {
+      results = await this.session.run(feeds);
+    } catch (e) {
+      console.warn('RVM inference failed', e);
+      return;
+    }
+
+    // Persist recurrent state for next frame — what makes RVM
+    // temporally stable. If the session changes tensor shapes (it
+    // won't, mid-stream) the next frame will error and we swallow it.
+    this.r1 = results.r1o as ort.Tensor;
+    this.r2 = results.r2o as ort.Tensor;
+    this.r3 = results.r3o as ort.Tensor;
+    this.r4 = results.r4o as ort.Tensor;
+
+    const fgr = results.fgr.data as Float32Array;
+    const pha = results.pha.data as Float32Array;
+
+    // Compose CHW outputs back into RGBA buffers for both the matted
+    // foreground (used directly by the compositor) and the mask
+    // canvas (used by centroid tracking).
+    const octx = this.mattedCanvas.getContext('2d')!;
+    const mctx = this.maskCanvas.getContext('2d')!;
+    const outImg = octx.createImageData(IN_W, IN_H);
+    const maskImg = mctx.createImageData(IN_W, IN_H);
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      const r = fgr[i];
+      const g = fgr[i + n];
+      const b = fgr[i + 2 * n];
+      const a = pha[i];
+      const ar = a < 0 ? 0 : a > 1 ? 255 : (a * 255) | 0;
+      outImg.data[p] = r < 0 ? 0 : r > 1 ? 255 : (r * 255) | 0;
+      outImg.data[p + 1] = g < 0 ? 0 : g > 1 ? 255 : (g * 255) | 0;
+      outImg.data[p + 2] = b < 0 ? 0 : b > 1 ? 255 : (b * 255) | 0;
+      outImg.data[p + 3] = ar;
+      maskImg.data[p] = 255;
+      maskImg.data[p + 1] = 255;
+      maskImg.data[p + 2] = 255;
+      maskImg.data[p + 3] = ar;
+    }
+    octx.putImageData(outImg, 0, 0);
+    mctx.putImageData(maskImg, 0, 0);
+    this.haveMatted = true;
+  }
+
+  getMaskCanvas() { return this.haveMatted ? this.maskCanvas : null; }
+  getMatted() { return this.haveMatted ? this.mattedCanvas : null; }
+  close() {
+    try { (this.session as any)?.release?.(); } catch {}
+    this.session = null;
+    this.ready = false;
+  }
+}
+
+// ============================================================
+// WebcamSegmenter — picks and drives the active backend
+// ============================================================
+
+function makeBackend(id: SegBackendId): Backend {
+  if (id === 'rvm') return new RvmBackend();
+  if (id === 'multiclass') return new MulticlassBackend();
+  return new SelfieBackend();
+}
+
+/**
+ * Probe backends in descending quality order and return the first
+ * one whose init() succeeds. Used by the "auto" dropdown choice so
+ * modern GPUs get RVM without the user having to care, and older
+ * hardware falls through gracefully.
+ */
+export async function detectBestBackend(): Promise<SegBackendId> {
+  const candidates: SegBackendId[] = ['rvm', 'multiclass', 'selfie'];
+  for (const id of candidates) {
+    const b = makeBackend(id);
+    try {
+      await b.init();
+      b.close();
+      return id;
+    } catch (e) {
+      console.warn(`seg backend ${id} unavailable`, e);
+      try { b.close(); } catch {}
+    }
+  }
+  return 'selfie';
+}
+
+export class WebcamSegmenter {
+  private backend: Backend;
+  private wantId: SegBackendId;
+
+  constructor(id: SegBackendId = 'selfie') {
+    this.wantId = id;
+    this.backend = makeBackend(id);
+  }
+
+  async init() {
+    try {
+      await this.backend.init();
+    } catch (e) {
+      // Silent drop-down to the safest backend on failure so the app
+      // never loses segmentation entirely. The caller sees a working
+      // segmenter — just a cheaper one than it asked for.
+      console.warn(`seg backend ${this.wantId} init failed — falling back to selfie`, e);
+      try { this.backend.close(); } catch {}
+      this.backend = makeBackend('selfie');
+      this.wantId = 'selfie';
+      await this.backend.init();
+    }
+  }
+
+  async process(video: HTMLVideoElement) {
+    try {
+      await this.backend.process(video);
+    } catch (e) {
+      console.warn('seg process failed', e);
+    }
+  }
+
+  getMaskCanvas() { return this.backend.getMaskCanvas(); }
+  getMatted() { return this.backend.getMatted(); }
+  get id(): SegBackendId { return this.backend.id; }
+
+  /**
+   * Swap backends mid-session. Old backend is closed only after the
+   * new one initialises successfully, so a failed swap leaves the
+   * running backend intact instead of dropping us to "no segmentation".
+   */
+  async setBackend(id: SegBackendId) {
+    if (this.backend.id === id) return;
+    const next = makeBackend(id);
+    try {
+      await next.init();
+    } catch (e) {
+      console.warn(`seg backend swap to ${id} failed — keeping ${this.backend.id}`, e);
+      try { next.close(); } catch {}
+      return;
+    }
+    try { this.backend.close(); } catch {}
+    this.backend = next;
+    this.wantId = id;
+  }
+
+  close() {
+    try { this.backend.close(); } catch {}
+  }
+}
+
+// ============================================================
+// Mask centroid (auto-center feature)
+// ============================================================
 
 // Tiny scratch canvas used by `computeMaskCentroid` to read mask pixels
 // at a low resolution. Reading 640x480 with getImageData every frame is
@@ -69,8 +453,9 @@ const CENTROID_H = 48;
  * tracks correctly) and the vertical position is biased upward by ~0.05
  * so the eyes — not the chin — sit in the middle of the shape.
  */
-export function computeMaskCentroid(results: Results | null): { x: number; y: number; area: number } | null {
-  const mask = results?.segmentationMask;
+export function computeMaskCentroid(
+  mask: HTMLCanvasElement | null
+): { x: number; y: number; area: number } | null {
   if (!mask) return null;
   if (!centroidCanvas) {
     centroidCanvas = document.createElement('canvas');
@@ -81,28 +466,24 @@ export function computeMaskCentroid(results: Results | null): { x: number; y: nu
   if (!ctx) return null;
   try {
     ctx.clearRect(0, 0, CENTROID_W, CENTROID_H);
-    ctx.drawImage(mask as CanvasImageSource, 0, 0, CENTROID_W, CENTROID_H);
+    ctx.drawImage(mask, 0, 0, CENTROID_W, CENTROID_H);
+    // We stored the person signal in the alpha channel of every
+    // backend's mask canvas, so read alpha (+3 offset) not red.
     const data = ctx.getImageData(0, 0, CENTROID_W, CENTROID_H).data;
 
-    // Pass 1: find the topmost row that contains a confident person pixel.
-    // We treat anything with mask weight >= 64 as "definitely person" so
-    // we don't latch onto stray noise pixels at the top of the frame.
     let topRow = -1;
     for (let y = 0; y < CENTROID_H && topRow < 0; y++) {
       for (let x = 0; x < CENTROID_W; x++) {
-        if (data[(y * CENTROID_W + x) * 4] >= 64) { topRow = y; break; }
+        if (data[(y * CENTROID_W + x) * 4 + 3] >= 64) { topRow = y; break; }
       }
     }
     if (topRow < 0) return null;
 
-    // Pass 2: also find the bottommost row so we know how tall the
-    // person blob is. The "head slice" is the top 25% of that range,
-    // capped at ~12 rows (about 1/4 of the 48-row scratch canvas).
     let botRow = topRow;
     for (let y = CENTROID_H - 1; y > topRow; y--) {
       let any = false;
       for (let x = 0; x < CENTROID_W; x++) {
-        if (data[(y * CENTROID_W + x) * 4] >= 64) { any = true; break; }
+        if (data[(y * CENTROID_W + x) * 4 + 3] >= 64) { any = true; break; }
       }
       if (any) { botRow = y; break; }
     }
@@ -110,11 +491,10 @@ export function computeMaskCentroid(results: Results | null): { x: number; y: nu
     const sliceRows = Math.max(4, Math.min(14, Math.round(personHeight * 0.28)));
     const sliceBot = topRow + sliceRows;
 
-    // Pass 3: weighted centroid over the head slice only.
     let sumX = 0, sumY = 0, total = 0;
     for (let y = topRow; y < sliceBot && y < CENTROID_H; y++) {
       for (let x = 0; x < CENTROID_W; x++) {
-        const w = data[(y * CENTROID_W + x) * 4];
+        const w = data[(y * CENTROID_W + x) * 4 + 3];
         if (w < 48) continue;
         sumX += x * w;
         sumY += y * w;
@@ -125,15 +505,7 @@ export function computeMaskCentroid(results: Results | null): { x: number; y: nu
 
     const cx = (sumX / total) / (CENTROID_W - 1);
     let cy = (sumY / total) / (CENTROID_H - 1);
-    // Nudge the y target slightly DOWN so the eyes/nose sit in the middle
-    // of the shape rather than the forehead. The head slice's natural
-    // centroid lands a bit too high because the top of the head has more
-    // mask area than the chin (hair is wider than jawline).
     cy = Math.min(1, cy + 0.05);
-    // Normalised head-slice coverage (0..1). Used by callers as a
-    // confidence signal: when the face is half off-screen the slice
-    // shrinks a lot, so we can hold the previous target instead of
-    // chasing a clipped centroid.
     const area = total / ((CENTROID_W * sliceRows) * 255);
     return { x: cx, y: cy, area };
   } catch {
@@ -141,13 +513,32 @@ export function computeMaskCentroid(results: Results | null): { x: number; y: nu
   }
 }
 
+// ============================================================
+// Compositing
+// ============================================================
+
+// Reusable scratch canvases for the mask refinement pipeline.
+let maskCanvas: HTMLCanvasElement | null = null;
+let erodeCanvas: HTMLCanvasElement | null = null;
+
 /**
- * Compose a webcam frame with optional blur or background image replacement.
- * Returns a canvas (size = videoWidth x videoHeight).
+ * Compose a webcam frame with optional blur or background image
+ * replacement. The backend's mask or matted output is spliced in as
+ * appropriate:
+ *
+ *   - If `matted` is provided (RVM path), draw the background first
+ *     and alpha-blend the matted foreground on top. No mask refinement
+ *     needed because RVM already produced a proper alpha matte.
+ *
+ *   - Otherwise use `mask` (segmentation path): temporal smooth,
+ *     joint-bilateral refine on WebGL (or canvas2D erode fallback),
+ *     then matte the live video through it and place a background
+ *     behind.
  */
 export function composeSegmented(
   video: HTMLVideoElement,
-  results: Results | null,
+  mask: HTMLCanvasElement | null,
+  matted: HTMLCanvasElement | null,
   mode: SegMode,
   bgImage: HTMLImageElement | null,
   out: HTMLCanvasElement
@@ -160,43 +551,97 @@ export function composeSegmented(
   ctx.save();
   ctx.clearRect(0, 0, w, h);
 
-  if (mode === 'none' || !results) {
+  if (mode === 'none') {
     ctx.drawImage(video, 0, 0, w, h);
     ctx.restore();
     return out;
   }
 
-  // ---- Build a smoothed mask ----
-  // 1. Temporal smoothing: blend the new mask over the previous one with a
-  //    low alpha (0.55) so single-frame jitter gets averaged out.
-  // 2. Spatial smoothing: blur the result a few pixels so the cutout edge
-  //    is feathered instead of hard-pixel jagged.
+  // ---- Matting fast path (RVM) ----
+  // Backend already produced a premultiplied foreground; we just need
+  // to drop a background behind it.
+  if (matted) {
+    if (mode === 'blur') {
+      ctx.filter = 'blur(14px)';
+      ctx.drawImage(video, 0, 0, w, h);
+      ctx.filter = 'none';
+    } else if (mode === 'image' && bgImage && bgImage.complete) {
+      ctx.drawImage(bgImage, 0, 0, w, h);
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(matted, 0, 0, w, h);
+    ctx.restore();
+    return out;
+  }
+
+  if (!mask) {
+    ctx.drawImage(video, 0, 0, w, h);
+    ctx.restore();
+    return out;
+  }
+
+  // ---- Segmentation path (Selfie / Multiclass) ----
+  // Temporal smoothing: fade the previous frame's alpha in place and
+  // draw the new one on top at full alpha. `destination-out` fades
+  // alpha without darkening colors, which would otherwise confuse
+  // the source-in matte step below.
   if (!maskCanvas) maskCanvas = document.createElement('canvas');
   if (maskCanvas.width !== w) { maskCanvas.width = w; maskCanvas.height = h; }
   const mctx = maskCanvas.getContext('2d')!;
   mctx.save();
-  mctx.globalCompositeOperation = 'source-over';
-  // Fade the previous mask slightly so it doesn't ghost forever.
-  mctx.globalAlpha = 0.45;
+  mctx.globalCompositeOperation = 'destination-out';
+  mctx.globalAlpha = 0.55;
   mctx.fillStyle = '#000';
   mctx.fillRect(0, 0, w, h);
-  // Blend in the new mask on top.
-  mctx.globalAlpha = 0.55;
-  mctx.drawImage(results.segmentationMask as any, 0, 0, w, h);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1.0;
+  mctx.drawImage(mask, 0, 0, w, h);
   mctx.restore();
 
-  // Draw the smoothed mask into the output with a feathering blur.
+  // Preferred refinement: joint-bilateral in WebGL. Snaps the mask
+  // boundary to real image edges (hair, jaw, collar) using the live
+  // video as a guide. Falls back to a canvas2D erosion pass on
+  // machines without working WebGL.
+  let maskSource: HTMLCanvasElement = maskCanvas;
+  const refined = refineMaskGL(video, maskCanvas, 0.55);
+  if (refined) {
+    maskSource = refined;
+  } else {
+    if (!erodeCanvas) erodeCanvas = document.createElement('canvas');
+    if (erodeCanvas.width !== w) { erodeCanvas.width = w; erodeCanvas.height = h; }
+    const ectx = erodeCanvas.getContext('2d')!;
+    ectx.save();
+    ectx.clearRect(0, 0, w, h);
+    ectx.globalCompositeOperation = 'source-over';
+    ectx.drawImage(maskCanvas, 0, 0, w, h);
+    ectx.globalCompositeOperation = 'destination-in';
+    const e = 2;
+    for (const [dx, dy] of [
+      [ e, 0], [-e, 0], [0,  e], [0, -e],
+      [ e,  e], [ e, -e], [-e,  e], [-e, -e]
+    ] as [number, number][]) {
+      ectx.drawImage(maskCanvas, dx, dy, w, h);
+    }
+    ectx.restore();
+    maskSource = erodeCanvas;
+  }
+
   ctx.save();
-  ctx.filter = 'blur(3px)';
-  ctx.drawImage(maskCanvas, 0, 0, w, h);
-  ctx.filter = 'none';
+  if (refined) {
+    ctx.drawImage(maskSource, 0, 0, w, h);
+  } else {
+    ctx.filter = 'blur(3px)';
+    ctx.drawImage(maskSource, 0, 0, w, h);
+    ctx.filter = 'none';
+  }
   ctx.restore();
 
-  // 2) Only draw person where mask exists
   ctx.globalCompositeOperation = 'source-in';
   ctx.drawImage(video, 0, 0, w, h);
 
-  // 3) Draw background behind
   ctx.globalCompositeOperation = 'destination-over';
   if (mode === 'blur') {
     ctx.filter = 'blur(14px)';

@@ -1440,6 +1440,153 @@ button.success.big { font-size: 14px; padding: 9px 20px; }
 .coming-soon-card p { margin: 6px 0; color: var(--text); font-size: 13.5px; }
 .coming-soon-card .muted { color: var(--muted); font-size: 12px; }
 
+/* ============ Face Blur ============ */
+.faceblur {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px 28px;
+  overflow-y: auto;
+  transition: box-shadow 0.12s ease, background-color 0.12s ease;
+}
+.faceblur.drag-active {
+  box-shadow: inset 0 0 0 3px #3b82f6;
+  background-color: rgba(59, 130, 246, 0.06);
+}
+.fb-step {
+  background: #0d1117;
+  border: 1px solid #262d36;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.fb-step h3 {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+}
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.fb-row .muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.fb-video-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: #000;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fb-video {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  background: #000;
+}
+.fb-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  /* Match the native video element's letterboxing so the overlay
+     lines up pixel-perfectly with the underlying frame regardless
+     of aspect ratio. The canvas's intrinsic size is set to the
+     video's native resolution by the draw loop, and object-fit:
+     contain plus a constrained max-height replicates the
+     <video>'s own scaling. */
+  max-height: 360px;
+  object-fit: contain;
+  pointer-events: none;
+}
+.fb-progress {
+  margin-top: 10px;
+  height: 6px;
+  border-radius: 3px;
+  background: #1b2028;
+  overflow: hidden;
+}
+.fb-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #22c55e);
+  transition: width 0.15s linear;
+}
+.fb-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.fb-thumb {
+  background: #161b22;
+  border: 2px solid #262d36;
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 11px;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+.fb-thumb:hover {
+  border-color: #3b82f6;
+  transform: translateY(-1px);
+}
+.fb-thumb.sel {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px #22c55e inset;
+}
+.fb-thumb img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 4px;
+  display: block;
+}
+.fb-thumb-fallback {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #262d36;
+  color: var(--muted);
+  border-radius: 4px;
+  font-size: 20px;
+}
+.fb-thumb-time {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.fb-preview {
+  margin-top: 10px;
+  width: 100%;
+  max-height: 280px;
+  background: #000;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.fb-error {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  position: sticky;
+  bottom: 0;
+}
+
 /* ============ Video Editor ============ */
 .editor-main {
   display: flex;

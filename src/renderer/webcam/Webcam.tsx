@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { WebcamEffect, WebcamShape, WebcamSize } from '../../shared/types';
 import { EFFECTS, SHAPES, WEBCAM_PX, combinedWebcamFilter } from '../../shared/types';
-import { WebcamSegmenter, composeSegmented, computeMaskCentroid, SegMode } from '../lib/segmenter';
+import { WebcamSegmenter, composeSegmented, computeMaskCentroid, SegMode, SegBackendId } from '../lib/segmenter';
 import { createAutoFrameState, updateAutoFrame } from '../lib/autoFrame';
 import { shapePath } from '../lib/shapes';
 
@@ -22,6 +22,7 @@ declare global {
       ctrlStart: () => void;
       ctrlPauseToggle: () => void;
       ctrlStop: () => void;
+      quitApp: () => Promise<void>;
     };
   }
 }
@@ -48,6 +49,7 @@ type Config = {
   bgImageData?: string; // data: URL of user-uploaded background
   enabled?: boolean;    // when false, hide the camera bubble (toolbar + HUD only)
   autoCenter?: boolean; // when true, override offsetX/Y with mask centroid
+  segBackend?: SegBackendId;
 };
 
 const DEFAULT_CFG: Config = {
@@ -251,12 +253,24 @@ export default function WebcamOverlay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelOpen, cfg.size]);
 
-  // Init segmenter lazily
+  // Init segmenter lazily. The initial backend comes from the config
+  // the main app sends us (`cfg.segBackend`); subsequent swaps flow
+  // through the separate effect below that watches `cfg.segBackend`.
   useEffect(() => {
-    segRef.current = new WebcamSegmenter();
+    segRef.current = new WebcamSegmenter(cfgRef.current.segBackend ?? 'selfie');
     segRef.current.init().catch(() => {});
     return () => segRef.current?.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Hot-swap the segmentation backend when the main app's dropdown
+  // changes. `setBackend` is a no-op if the requested backend is
+  // already active, so this is cheap.
+  useEffect(() => {
+    if (!segRef.current) return;
+    if (!cfg.segBackend) return;
+    segRef.current.setBackend(cfg.segBackend).catch(() => {});
+  }, [cfg.segBackend]);
 
   // Render loop
   useEffect(() => {
@@ -275,17 +289,18 @@ export default function WebcamOverlay() {
         const wantSeg = cur.bgMode !== 'none' || cur.autoCenter === true;
         let src: CanvasImageSource = v;
         if (wantSeg && segRef.current) {
-          await segRef.current.process(v).catch(() => {});
-          const results = (segRef.current as any).lastResults;
+          await segRef.current.process(v);
+          const mask = segRef.current.getMaskCanvas();
+          const matted = segRef.current.getMatted();
           if (cur.bgMode !== 'none') {
-            src = composeSegmented(v, results, cur.bgMode, bgImgRef.current, segOutRef.current);
+            src = composeSegmented(v, mask, matted, cur.bgMode, bgImgRef.current, segOutRef.current);
           }
           // Auto-center: feed the mask centroid through the shared
           // auto-frame filter. It holds the previous framing when the
           // face is partially off-screen (low mask area) so the pan
           // doesn't slide away with the clipped centroid.
           if (cur.autoCenter) {
-            const ctr = computeMaskCentroid(results);
+            const ctr = computeMaskCentroid(mask);
             updateAutoFrame(autoFrameRef.current, ctr);
           }
         }
@@ -387,13 +402,26 @@ export default function WebcamOverlay() {
         ) : (
           <div className="ec-buttons">
             {ctrlState === 'idle' && (
-              <button
-                className="ec-btn start"
-                title="Start recording"
-                onClick={(e) => { e.stopPropagation(); window.webcamApi.ctrlStart(); }}
-              >
-                <svg viewBox="0 0 24 24" width="11" height="11"><circle cx="12" cy="12" r="7" fill="currentColor" /></svg>
-              </button>
+              <>
+                <button
+                  className="ec-btn start"
+                  title="Start recording"
+                  onClick={(e) => { e.stopPropagation(); window.webcamApi.ctrlStart(); }}
+                >
+                  <svg viewBox="0 0 24 24" width="11" height="11"><circle cx="12" cy="12" r="7" fill="currentColor" /></svg>
+                </button>
+                <button
+                  className="ec-btn quit"
+                  title="Quit QNSub Studio"
+                  aria-label="Quit"
+                  onClick={(e) => { e.stopPropagation(); window.webcamApi.quitApp(); }}
+                >
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                  </svg>
+                </button>
+              </>
             )}
             {(ctrlState === 'recording' || ctrlState === 'paused') && (
               <>

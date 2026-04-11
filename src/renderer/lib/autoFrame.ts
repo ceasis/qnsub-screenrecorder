@@ -28,16 +28,25 @@ export type AutoFrameState = {
   hasTarget: boolean;
   targetX: number;
   targetY: number;
+  // Low-pass-filtered centroid reading. The raw mask centroid wobbles ~1-2
+  // pixels every frame due to segmentation noise; feeding that directly into
+  // the target causes visible jitter even with downstream smoothing. We
+  // pre-filter the measurement itself so the target it drives is already
+  // quiet.
+  filtX: number;
+  filtY: number;
+  hasFilt: boolean;
 };
 
 export function createAutoFrameState(): AutoFrameState {
-  return { x: 0, y: 0, hasTarget: false, targetX: 0, targetY: 0 };
+  return { x: 0, y: 0, hasTarget: false, targetX: 0, targetY: 0, filtX: 0, filtY: 0, hasFilt: false };
 }
 
 const MIN_AREA = 0.12;          // head-slice coverage below this = low confidence
-const DEAD_ZONE = 0.01;         // ignore target moves smaller than this
-const SMOOTH = 0.08;             // per-frame EMA blend
-const MAX_STEP = 0.012;          // absolute cap on delta per frame
+const MEAS_SMOOTH = 0.18;        // EMA blend on the raw centroid measurement
+const DEAD_ZONE = 0.02;          // hysteresis radius — target only moves when filtered centroid drifts beyond this
+const SMOOTH = 0.05;             // per-frame EMA blend from position → target
+const MAX_STEP = 0.008;          // absolute cap on delta per frame
 
 /**
  * Update the stored pan offset given a new centroid reading.
@@ -51,10 +60,21 @@ export function updateAutoFrame(
   centroid: { x: number; y: number; area: number } | null
 ): { x: number; y: number } {
   if (centroid && centroid.area >= MIN_AREA) {
-    // Centroid is 0..1 in source-video space. Map to an offset that pans
-    // the crop window toward the face: centroid 0.5 → offset 0.
-    const tx = (centroid.x - 0.5) * 2 * 0.5;
-    const ty = (centroid.y - 0.5) * 2 * 0.5;
+    // Step 1 — low-pass filter the raw centroid so frame-to-frame mask
+    // noise stops reaching downstream logic.
+    if (!state.hasFilt) {
+      state.filtX = centroid.x;
+      state.filtY = centroid.y;
+      state.hasFilt = true;
+    } else {
+      state.filtX += (centroid.x - state.filtX) * MEAS_SMOOTH;
+      state.filtY += (centroid.y - state.filtY) * MEAS_SMOOTH;
+    }
+
+    // Step 2 — map the filtered centroid to a pan offset. Centroid is
+    // 0..1 in source-video space; offset 0 means centered.
+    const tx = (state.filtX - 0.5) * 2 * 0.5;
+    const ty = (state.filtY - 0.5) * 2 * 0.5;
 
     if (!state.hasTarget) {
       // First confident reading — snap target and position to it so we
@@ -67,7 +87,8 @@ export function updateAutoFrame(
       return { x: state.x, y: state.y };
     }
 
-    // Dead-zone: only accept the new target if it moved enough to matter.
+    // Step 3 — hysteresis dead-zone: only re-anchor the target when the
+    // filtered centroid has drifted clearly outside the current anchor.
     if (Math.abs(tx - state.targetX) > DEAD_ZONE) state.targetX = tx;
     if (Math.abs(ty - state.targetY) > DEAD_ZONE) state.targetY = ty;
   }

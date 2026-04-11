@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import RecorderTab from './Recorder';
 import EditorTab from './Editor';
+import FaceBlurTab from './FaceBlur';
 
-type Tab = 'recorder' | 'editor';
+type Tab = 'recorder' | 'editor' | 'faceblur';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('recorder');
@@ -40,6 +41,20 @@ export default function App() {
               </svg>
             </span>
             Screen Recorder
+          </button>
+          <button
+            className={`tab ${tab === 'faceblur' ? 'sel' : ''}`}
+            onClick={() => setTab('faceblur')}
+            title="Blur faces in an existing video"
+          >
+            <span className="tab-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="10" r="4" />
+                <path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" />
+                <path d="M9 9.5c.6-.4 1.3-.6 2-.6M14 11.2c-.3.4-.8.7-1.3.8" opacity="0.5" />
+              </svg>
+            </span>
+            Face Blur
           </button>
           <button
             className={`tab ${tab === 'editor' ? 'sel' : ''}`}
@@ -80,6 +95,9 @@ export default function App() {
       */}
       <div className={`tab-panel ${tab === 'recorder' ? 'active' : 'inactive'}`}>
         <RecorderTab />
+      </div>
+      <div className={`tab-panel ${tab === 'faceblur' ? 'active' : 'inactive'}`}>
+        <FaceBlurTab />
       </div>
       <div className={`tab-panel ${tab === 'editor' ? 'active' : 'inactive'}`}>
         <EditorTab />

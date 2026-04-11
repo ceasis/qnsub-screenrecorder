@@ -242,6 +242,14 @@ html, body, #root {
 .ec-btn.pause:hover { background: rgba(255, 184, 79, 0.28); }
 .ec-btn.stop   { color: #ff5a5a; background: rgba(255, 90, 90, 0.16); border-color: rgba(255, 90, 90, 0.55); }
 .ec-btn.stop:hover  { background: rgba(255, 90, 90, 0.28); }
+/* Quit-app button: red X sitting 5px after the green Start button. */
+.ec-btn.quit {
+  color: #ff5a5a;
+  background: rgba(255, 90, 90, 0.18);
+  border-color: rgba(255, 90, 90, 0.6);
+  margin-left: 5px;
+}
+.ec-btn.quit:hover { background: rgba(255, 90, 90, 0.32); }
 
 /* Config panel shown under the bubble when 3-dots is clicked. Sits below
    the bubble in normal flex flow — the Electron window is resized taller

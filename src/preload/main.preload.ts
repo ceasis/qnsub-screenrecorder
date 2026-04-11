@@ -77,6 +77,8 @@ const api = {
   closeWebcamOverlay: () => ipcRenderer.invoke('webcam:close'),
   hideWebcamOverlay: () => ipcRenderer.invoke('webcam:hide'),
   showWebcamOverlay: () => ipcRenderer.invoke('webcam:show'),
+  setWebcamAvoidance: (opts: { autoRelocate?: boolean; autoOpacity?: boolean }) =>
+    ipcRenderer.invoke('webcam:setAvoidance', opts),
 
   openControlPanel: () => ipcRenderer.invoke('control:open'),
   closeControlPanel: () => ipcRenderer.invoke('control:close'),
@@ -102,7 +104,25 @@ const api = {
     const l = (_: unknown, p: any) => cb(p);
     ipcRenderer.on('webcam:local-change', l);
     return () => ipcRenderer.removeListener('webcam:local-change', l);
-  }
+  },
+
+  // Face Blur
+  pickBlurVideo: (): Promise<{ path: string; name: string } | null> =>
+    ipcRenderer.invoke('faceblur:pick-video'),
+  pickBlurOutput: (suggestedName: string): Promise<string | null> =>
+    ipcRenderer.invoke('faceblur:pick-output', suggestedName),
+  blurStreamStart: (opts: { outputPath: string; fps?: number }): Promise<{ ok: boolean; sessionId?: string; outputPath?: string; error?: string }> =>
+    ipcRenderer.invoke('faceblur:streamStart', opts),
+  blurStreamChunk: (sessionId: string, bytes: ArrayBuffer): Promise<boolean> =>
+    ipcRenderer.invoke('faceblur:streamChunk', sessionId, bytes),
+  blurStreamStop: (sessionId: string, openAfter: boolean = true): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('faceblur:streamStop', sessionId, openAfter),
+  blurStreamCancel: (sessionId: string): Promise<boolean> =>
+    ipcRenderer.invoke('faceblur:streamCancel', sessionId),
+  blurMuxAudio: (opts: { blurredPath: string; sourcePath: string }): Promise<boolean> =>
+    ipcRenderer.invoke('faceblur:muxAudio', opts),
+  readVideoFile: (path: string): Promise<ArrayBuffer | null> =>
+    ipcRenderer.invoke('faceblur:read-video-file', path)
 };
 
 contextBridge.exposeInMainWorld('api', api);

@@ -1,7 +1,7 @@
 import type { Arrow, Rect, WebcamEffect, WebcamShape, WebcamSize } from '../../shared/types';
 import { COLOR_HEX, WEBCAM_PX, combinedWebcamFilter } from '../../shared/types';
 import { drawAnnotation } from './arrowDraw';
-import { composeSegmented, computeMaskCentroid, SegMode, WebcamSegmenter } from './segmenter';
+import { composeSegmented, computeMaskCentroid, SegMode, SegBackendId, WebcamSegmenter } from './segmenter';
 import { createAutoFrameState, updateAutoFrame, type AutoFrameState } from './autoFrame';
 import { shapePath } from './shapes';
 
@@ -38,6 +38,7 @@ export type WebcamSettings = {
   offsetY: number;
   faceLight: number; // 0..100 — soft fill-light intensity applied on top of effect
   autoCenter?: boolean; // override offsetX/Y with mask centroid tracking
+  segBackend?: SegBackendId; // which segmentation/matting model to use
 };
 
 export class Compositor {
@@ -73,7 +74,7 @@ export class Compositor {
   private cfg: CompositorConfig;
   private webcamSettings: WebcamSettings;
   private arrows: Arrow[] = [];
-  private segmenter = new WebcamSegmenter();
+  private segmenter: WebcamSegmenter;
   private webcamOut: HTMLCanvasElement = document.createElement('canvas');
   private cursorZoom: CursorZoomState = {
     enabled: false, factor: 1.6, x: 0, y: 0, displayW: 1920, displayH: 1080
@@ -90,6 +91,7 @@ export class Compositor {
   constructor(cfg: CompositorConfig, webcamSettings: WebcamSettings) {
     this.cfg = cfg;
     this.webcamSettings = webcamSettings;
+    this.segmenter = new WebcamSegmenter(webcamSettings.segBackend ?? 'selfie');
     this.canvas = document.createElement('canvas');
     this.canvas.width = cfg.outWidth;
     this.canvas.height = cfg.outHeight;
@@ -97,7 +99,13 @@ export class Compositor {
   }
 
   setWebcamSettings(s: Partial<WebcamSettings>) {
+    const prevBackend = this.webcamSettings.segBackend;
     this.webcamSettings = { ...this.webcamSettings, ...s };
+    if (s.segBackend && s.segBackend !== prevBackend) {
+      // Hot-swap the segmenter in the background — old one keeps
+      // serving frames until the new backend has finished init.
+      this.segmenter.setBackend(s.segBackend).catch(() => {});
+    }
   }
 
   setCrop(crop: Rect | null) {
@@ -287,12 +295,13 @@ export class Compositor {
           .catch(() => {})
           .finally(() => { this.segPending = false; });
       }
-      const results = (this.segmenter as any).lastResults;
+      const mask = this.segmenter.getMaskCanvas();
+      const matted = this.segmenter.getMatted();
       if (bgMode !== 'none') {
-        src = composeSegmented(video, results, bgMode, bgImage, this.webcamOut);
+        src = composeSegmented(video, mask, matted, bgMode, bgImage, this.webcamOut);
       }
       if (autoCenter) {
-        const ctr = computeMaskCentroid(results);
+        const ctr = computeMaskCentroid(mask);
         updateAutoFrame(this.autoFrame, ctr);
       }
     }

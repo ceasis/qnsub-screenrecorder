@@ -45,5 +45,8 @@ contextBridge.exposeInMainWorld('webcamApi', {
   },
   ctrlStart: () => ipcRenderer.send('control:command', 'start'),
   ctrlPauseToggle: () => ipcRenderer.send('control:command', 'pause'),
-  ctrlStop: () => ipcRenderer.send('control:command', 'stop')
+  ctrlStop: () => ipcRenderer.send('control:command', 'stop'),
+
+  // Immediately quit the entire app from the floating HUD.
+  quitApp: () => ipcRenderer.invoke('app:quit')
 });

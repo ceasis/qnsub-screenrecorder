@@ -11,6 +11,7 @@ import {
 } from './windows';
 import { remuxWebmToMp4 } from './ffmpeg';
 import { streamStart, streamChunk, streamStop, streamCancel } from './streamingRecorder';
+import ffmpegStaticImport from 'ffmpeg-static';
 
 let annotationWin: BrowserWindow | null = null;
 let regionWins: BrowserWindow[] = [];
@@ -18,6 +19,152 @@ let countdownWin: BrowserWindow | null = null;
 let webcamWin: BrowserWindow | null = null;
 let idiotWin: BrowserWindow | null = null;
 let cursorTimer: NodeJS.Timeout | null = null;
+
+// ---------- Cursor-aware webcam avoidance ----------
+// The floating webcam window can either slide out of the cursor's way
+// (autoRelocate) or fade translucent when the cursor nears it
+// (autoOpacity). Both are driven by a single shared screen-cursor poll
+// running at ~30 fps. Toggles can be enabled/disabled independently; the
+// poll is only active while at least one of them is on.
+let webcamAvoidTimer: NodeJS.Timeout | null = null;
+let webcamAutoRelocate = false;
+let webcamAutoOpacity = false;
+// The original ("home") position the user dragged the window to. When the
+// cursor moves away, we slide smoothly back to this spot.
+let webcamHomePos: { x: number; y: number } | null = null;
+// Smoothed current bounds / opacity used by the poll loop so transitions
+// don't jump frame-to-frame.
+let webcamSmoothX = 0;
+let webcamSmoothY = 0;
+let webcamSmoothOpacity = 1;
+// When true, the next 'move' event on the webcam window was triggered by
+// our own avoidance loop and must NOT be interpreted as a user drag.
+let webcamSuppressMoveAsUser = false;
+
+const AVOID_BUFFER = 60;       // px of padding around the window that counts as "near"
+const OPACITY_FAR = 1.0;
+const OPACITY_NEAR = 0.25;
+const SMOOTH_POS = 0.18;       // exponential smoothing factor for position
+const SMOOTH_OP  = 0.3;        // exponential smoothing factor for opacity
+
+function captureWebcamHome() {
+  if (webcamWin && !webcamWin.isDestroyed()) {
+    const b = webcamWin.getBounds();
+    webcamHomePos = { x: b.x, y: b.y };
+    webcamSmoothX = b.x;
+    webcamSmoothY = b.y;
+  }
+}
+
+function startWebcamAvoidanceIfNeeded() {
+  if (webcamAvoidTimer) return;
+  if (!webcamAutoRelocate && !webcamAutoOpacity) return;
+  if (!webcamWin || webcamWin.isDestroyed()) return;
+  if (!webcamHomePos) captureWebcamHome();
+  webcamAvoidTimer = setInterval(() => {
+    try {
+      if (!webcamWin || webcamWin.isDestroyed()) {
+        stopWebcamAvoidance();
+        return;
+      }
+      const pt = screen.getCursorScreenPoint();
+      const b = webcamWin.getBounds();
+
+      // "Near" is evaluated against the STABLE home rect, not the window's
+      // current (possibly already-slid-away) position. If we used the
+      // current bounds, the relocation created a feedback loop: window
+      // slides away → cursor no longer near current bounds → target flips
+      // back to home → window slides back → cursor near again → repeat.
+      // Anchoring the hit-test to the home rect gives stable hysteresis
+      // so the window stays displaced until the cursor actually leaves
+      // the original area.
+      const hx = webcamHomePos ? webcamHomePos.x : b.x;
+      const hy = webcamHomePos ? webcamHomePos.y : b.y;
+      const nearX = pt.x >= hx - AVOID_BUFFER && pt.x <= hx + b.width + AVOID_BUFFER;
+      const nearY = pt.y >= hy - AVOID_BUFFER && pt.y <= hy + b.height + AVOID_BUFFER;
+      const isNear = nearX && nearY;
+      const targetOp = webcamAutoOpacity ? (isNear ? OPACITY_NEAR : OPACITY_FAR) : 1;
+      webcamSmoothOpacity += (targetOp - webcamSmoothOpacity) * SMOOTH_OP;
+      if (Math.abs(webcamSmoothOpacity - webcamWin.getOpacity()) > 0.01) {
+        webcamWin.setOpacity(Math.max(0.1, Math.min(1, webcamSmoothOpacity)));
+      }
+
+      // Desired position: when the cursor invades the window, jump to the
+      // anchor point farthest from the cursor. Anchors are the 8 "safe
+      // spots" around the display perimeter:
+      //   top-left   top-center   top-right
+      //   mid-left                mid-right
+      //   bot-left   bot-center   bot-right
+      // (no center anchor — we never want the bubble floating in the
+      // middle of the screen.) Once the cursor clears the home zone we
+      // glide back to the user's original dropped position.
+      if (webcamAutoRelocate && webcamHomePos) {
+        let targetX = webcamHomePos.x;
+        let targetY = webcamHomePos.y;
+        if (isNear) {
+          const d = screen.getDisplayNearestPoint(pt);
+          const margin = 16;
+          const leftX = d.bounds.x + margin;
+          const rightX = d.bounds.x + d.bounds.width - b.width - margin;
+          const midX = d.bounds.x + Math.round((d.bounds.width - b.width) / 2);
+          const topY = d.bounds.y + margin;
+          const botY = d.bounds.y + d.bounds.height - b.height - margin;
+          const midY = d.bounds.y + Math.round((d.bounds.height - b.height) / 2);
+          const anchors: { x: number; y: number }[] = [
+            { x: leftX,  y: topY },   // top-left
+            { x: midX,   y: topY },   // top-center
+            { x: rightX, y: topY },   // top-right
+            { x: leftX,  y: midY },   // mid-left
+            { x: rightX, y: midY },   // mid-right
+            { x: leftX,  y: botY },   // bot-left
+            { x: midX,   y: botY },   // bot-center
+            { x: rightX, y: botY }    // bot-right
+          ];
+          // Pick the anchor whose CENTER is farthest from the cursor —
+          // that's the safest landing spot so the bubble doesn't end up
+          // still under the user's hand after moving.
+          let best = anchors[0];
+          let bestDist = -1;
+          for (const a of anchors) {
+            const cx = a.x + b.width / 2;
+            const cy = a.y + b.height / 2;
+            const dx = cx - pt.x;
+            const dy = cy - pt.y;
+            const dist = dx * dx + dy * dy;
+            if (dist > bestDist) { bestDist = dist; best = a; }
+          }
+          targetX = best.x;
+          targetY = best.y;
+        }
+        webcamSmoothX += (targetX - webcamSmoothX) * SMOOTH_POS;
+        webcamSmoothY += (targetY - webcamSmoothY) * SMOOTH_POS;
+        const nx = Math.round(webcamSmoothX);
+        const ny = Math.round(webcamSmoothY);
+        if (nx !== b.x || ny !== b.y) {
+          webcamSuppressMoveAsUser = true;
+          webcamWin.setBounds({ x: nx, y: ny, width: b.width, height: b.height });
+        }
+      }
+    } catch {}
+  }, 33);
+}
+
+function stopWebcamAvoidance() {
+  if (webcamAvoidTimer) {
+    clearInterval(webcamAvoidTimer);
+    webcamAvoidTimer = null;
+  }
+  // Return the window to full opacity and its home position so the user
+  // isn't left staring at a faded or displaced bubble.
+  if (webcamWin && !webcamWin.isDestroyed()) {
+    webcamWin.setOpacity(1);
+    webcamSmoothOpacity = 1;
+    if (webcamHomePos && webcamAutoRelocate === false) {
+      const b = webcamWin.getBounds();
+      webcamWin.setBounds({ x: webcamHomePos.x, y: webcamHomePos.y, width: b.width, height: b.height });
+    }
+  }
+}
 
 // Pull the idiot board directly beneath the floating webcam window —
 // the webcam window now contains the embedded recording HUD, so docking
@@ -134,11 +281,32 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
       return true;
     }
     webcamWin = createWebcamWindow();
-    webcamWin.on('closed', () => (webcamWin = null));
+    webcamWin.on('closed', () => {
+      webcamWin = null;
+      stopWebcamAvoidance();
+      webcamHomePos = null;
+    });
     // Keep the idiot board docked beneath the webcam window as the user
-    // drags it around the screen.
-    webcamWin.on('move', dockIdiotBoardUnderControl);
-    webcamWin.on('moved', dockIdiotBoardUnderControl);
+    // drags it around the screen, and keep our "home" position in sync
+    // with wherever the user drops the bubble. Programmatic moves from
+    // the avoidance loop set webcamSuppressMoveAsUser=true so we don't
+    // treat those as a new home position.
+    const onWebcamMove = () => {
+      dockIdiotBoardUnderControl();
+      if (!webcamWin || webcamWin.isDestroyed()) return;
+      if (webcamSuppressMoveAsUser) {
+        webcamSuppressMoveAsUser = false;
+        return;
+      }
+      const b = webcamWin.getBounds();
+      webcamHomePos = { x: b.x, y: b.y };
+      webcamSmoothX = b.x;
+      webcamSmoothY = b.y;
+    };
+    webcamWin.on('move', onWebcamMove);
+    webcamWin.on('moved', onWebcamMove);
+    // Capture initial home once the window renders.
+    webcamWin.once('ready-to-show', captureWebcamHome);
     webcamWin.webContents.once('did-finish-load', () => {
       webcamWin!.webContents.send('webcam:config', config);
     });
@@ -167,6 +335,19 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   });
   ipcMain.handle('webcam:show', async () => {
     if (webcamWin && !webcamWin.isDestroyed() && !webcamWin.isVisible()) webcamWin.show();
+    return true;
+  });
+
+  // Cursor-aware webcam avoidance toggles. Called by the main renderer
+  // when the user flips either checkbox; either can be on independently.
+  ipcMain.handle('webcam:setAvoidance', async (_e, opts: { autoRelocate?: boolean; autoOpacity?: boolean }) => {
+    if (opts.autoRelocate !== undefined) webcamAutoRelocate = !!opts.autoRelocate;
+    if (opts.autoOpacity !== undefined) webcamAutoOpacity = !!opts.autoOpacity;
+    if (webcamAutoRelocate || webcamAutoOpacity) {
+      startWebcamAvoidanceIfNeeded();
+    } else {
+      stopWebcamAvoidance();
+    }
     return true;
   });
 
@@ -429,5 +610,149 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle('dialog:error', async (_e, message: string) => {
     const main = getMainWindow();
     await dialog.showMessageBox(main!, { type: 'error', message });
+  });
+
+  // ---------- Face Blur ----------
+  // Let the renderer pick a local video file and hand back an
+  // absolute path. Loaded via the custom `media://` protocol already
+  // registered in main.ts so the renderer can `<video src="media://...">`
+  // without tripping the file:// CSP.
+  ipcMain.handle('faceblur:pick-video', async () => {
+    const main = getMainWindow();
+    const res = await dialog.showOpenDialog(main!, {
+      title: 'Choose video to blur',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] },
+        { name: 'All files', extensions: ['*'] }
+      ],
+      defaultPath: app.getPath('videos')
+    });
+    if (res.canceled || res.filePaths.length === 0) return null;
+    const p = res.filePaths[0];
+    return { path: p, name: basename(p) };
+  });
+
+  // Ask the user where to save the blurred result and hand back a
+  // fully-qualified output path (no file yet). The renderer then
+  // drives faceblur:streamStart()/Chunk/Stop to write into it.
+  ipcMain.handle('faceblur:pick-output', async (_e, suggestedName: string) => {
+    const main = getMainWindow();
+    const res = await dialog.showSaveDialog(main!, {
+      title: 'Save blurred video as…',
+      defaultPath: join(app.getPath('videos'), suggestedName),
+      filters: [{ name: 'MP4', extensions: ['mp4'] }]
+    });
+    if (res.canceled || !res.filePath) return null;
+    return res.filePath;
+  });
+
+  // Spawn an ffmpeg session that writes to a user-chosen absolute
+  // path. Mirrors recording:streamStart but without the auto-generated
+  // ScreenRecording_<stamp> folder — face-blur export picks its own
+  // target so we hand it the exact path instead.
+  ipcMain.handle('faceblur:streamStart', async (_e, opts: { outputPath: string; fps?: number }) => {
+    if (!opts?.outputPath) return { ok: false, error: 'No output path' };
+    const projectFolder = join(opts.outputPath, '..');
+    const sessionId = streamStart({ outputPath: opts.outputPath, projectFolder, fps: opts?.fps });
+    if (!sessionId) return { ok: false, error: 'Failed to spawn ffmpeg' };
+    return { ok: true, sessionId, outputPath: opts.outputPath };
+  });
+
+  ipcMain.handle('faceblur:streamChunk', async (_e, sessionId: string, bytes: ArrayBuffer) => {
+    return streamChunk(sessionId, bytes);
+  });
+
+  ipcMain.handle('faceblur:streamStop', async (_e, sessionId: string, openAfter: boolean = true) => {
+    const result = await streamStop(sessionId);
+    if (result.ok && result.path && openAfter) {
+      shell.showItemInFolder(result.path);
+    }
+    return result;
+  });
+
+  ipcMain.handle('faceblur:streamCancel', async (_e, sessionId: string) => {
+    streamCancel(sessionId);
+    return true;
+  });
+
+  // Read a local video file's bytes and hand them back to the renderer
+  // so it can wrap them in a Blob + object URL. We use this instead of
+  // a custom protocol (`media://` used to do this job) because
+  // Chromium's media URL safety check rejects custom schemes for
+  // `<video>` in Electron 31 regardless of the privileges we register —
+  // the rejection happens before our protocol handler is even called,
+  // so we can't fix it from the main side. Blob URLs sidestep the
+  // whole problem: they're a native browser primitive and <video>
+  // trusts them unconditionally. Tradeoff: the full file is loaded
+  // into renderer memory, so this isn't great for 10 GB files, but
+  // it's fine for normal screen recordings (usually under 500 MB).
+  ipcMain.handle('faceblur:read-video-file', async (_e, path: string) => {
+    try {
+      const buf = await fs.readFile(path);
+      // Return as an ArrayBuffer over IPC. Electron will serialise
+      // Buffer as `Uint8Array` in the renderer; we hand back the
+      // underlying ArrayBuffer so the renderer can feed it straight
+      // into `new Blob([...])`.
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    } catch (e: any) {
+      console.error('[faceblur:read-video-file] failed', path, e?.message || e);
+      return null;
+    }
+  });
+
+  // Second-pass audio mux. The face-blur export pipeline writes a
+  // video-only MP4 via the streaming ffmpeg session, then calls this
+  // to copy the audio track from the original source file into the
+  // blurred output. ffmpeg reads from both files, copies both
+  // streams, and writes to a temp sibling which we atomically rename
+  // over the original blurred file.
+  ipcMain.handle('faceblur:muxAudio', async (_e, opts: { blurredPath: string; sourcePath: string }) => {
+    if (!opts?.blurredPath || !opts?.sourcePath) return false;
+    const bin = (ffmpegStaticImport as unknown as string || '').replace('app.asar', 'app.asar.unpacked');
+    if (!bin) return false;
+    const tmpPath = opts.blurredPath.replace(/\.mp4$/i, '') + '.tmp.mp4';
+    const args = [
+      '-y',
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-i', opts.blurredPath,   // video (no audio)
+      '-i', opts.sourcePath,    // audio (and video we ignore)
+      '-map', '0:v:0',
+      '-map', '1:a:0?',         // optional audio stream
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      '-movflags', '+faststart',
+      tmpPath
+    ];
+    const { spawn: spawnChild } = await import('child_process');
+    const ok: boolean = await new Promise((resolve) => {
+      let err = '';
+      const proc = spawnChild(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      proc.stderr?.on('data', (d: Buffer) => { err += d.toString(); });
+      proc.on('error', () => resolve(false));
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          console.warn('[faceblur:muxAudio] ffmpeg failed', code, err.slice(-500));
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+    if (!ok) {
+      try { await fs.unlink(tmpPath); } catch {}
+      return false;
+    }
+    try {
+      await fs.unlink(opts.blurredPath);
+      await fs.rename(tmpPath, opts.blurredPath);
+      return true;
+    } catch (e) {
+      console.warn('[faceblur:muxAudio] rename failed', e);
+      return false;
+    }
   });
 }

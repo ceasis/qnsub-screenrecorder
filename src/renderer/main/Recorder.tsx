@@ -21,7 +21,8 @@ import {
   type VoiceChangerHandle,
   type VoicePreset
 } from '../lib/voiceChanger';
-import type { SegMode } from '../lib/segmenter';
+import type { SegMode, SegBackendId } from '../lib/segmenter';
+import { detectBestBackend } from '../lib/segmenter';
 import { Help } from './Help';
 import { usePersistedState } from './usePersistedState';
 
@@ -78,6 +79,7 @@ type WebcamOverlayCfg = {
   bgImageData?: string;
   enabled?: boolean;
   autoCenter?: boolean;
+  segBackend?: SegBackendId;
 };
 
 const SHAPES: WebcamShape[] = ALL_SHAPES;
@@ -188,7 +190,35 @@ export default function RecorderTab() {
   const [faceLight, setFaceLight] = usePersistedState<number>('rec.faceLight', 0);
   const [bgImageData, setBgImageData] = usePersistedState<string | undefined>('rec.bgImageData', undefined);
   const [autoCenter, setAutoCenter] = usePersistedState<boolean>('rec.autoCenter', false);
+  // Segmentation / matting backend preference. 'auto' resolves on
+  // mount to whichever backend successfully initialised (RVM > Tasks
+  // Multiclass > legacy Selfie). The resolved id is what actually
+  // gets pushed into the compositor + floating webcam overlay.
+  const [segBackendPref, setSegBackendPref] = usePersistedState<'auto' | SegBackendId>('rec.segBackend', 'auto');
+  const [resolvedBackend, setResolvedBackend] = useState<SegBackendId>('selfie');
+  useEffect(() => {
+    let cancelled = false;
+    if (segBackendPref === 'auto') {
+      detectBestBackend().then((id) => { if (!cancelled) setResolvedBackend(id); });
+    } else {
+      setResolvedBackend(segBackendPref);
+    }
+    return () => { cancelled = true; };
+  }, [segBackendPref]);
   const bgImageRef = useRef<HTMLImageElement | null>(null);
+  const bgFileInputRef = useRef<HTMLInputElement | null>(null);
+  const onPickBgImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setBgImageData(dataUrl);
+      setBgMode('image');
+    };
+    reader.readAsDataURL(f);
+    e.target.value = '';
+  };
   const [webcamPos, setWebcamPos] = usePersistedState<{ x: number; y: number }>('rec.webcamPos', { x: 0.75, y: 0.72 });
   const [color, setColor] = usePersistedState<AnnotationColor>('rec.color', 'red');
   const [annPresetId, setAnnPresetId] = usePersistedState<string>('rec.annPresetId', 'red');
@@ -224,6 +254,8 @@ export default function RecorderTab() {
   const [status, setStatus] = useState('Ready');
   const [saveFolder, setSaveFolder] = usePersistedState<string>('rec.saveFolder', '');
   const [openFolderAfter, setOpenFolderAfter] = usePersistedState<boolean>('rec.openFolderAfter', true);
+  const [webcamAutoRelocate, setWebcamAutoRelocate] = usePersistedState<boolean>('rec.webcamAutoRelocate', false);
+  const [webcamAutoOpacity, setWebcamAutoOpacity] = usePersistedState<boolean>('rec.webcamAutoOpacity', false);
 
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
@@ -472,7 +504,8 @@ export default function RecorderTab() {
         shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight,
         x: webcamPos.x, y: webcamPos.y,
         bgImage: bgImageRef.current,
-        autoCenter
+        autoCenter,
+        segBackend: resolvedBackend
       };
       const comp = new Compositor(
         {
@@ -672,9 +705,10 @@ export default function RecorderTab() {
     compositorRef.current?.setWebcamSettings({
       shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight,
       x: webcamPos.x, y: webcamPos.y,
-      autoCenter
+      autoCenter,
+      segBackend: resolvedBackend
     });
-  }, [shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, webcamPos, autoCenter]);
+  }, [shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, webcamPos, autoCenter, resolvedBackend]);
 
   // Always show the floating webcam overlay window while we're on the
   // Recorder tab. The window contains:
@@ -713,7 +747,7 @@ export default function RecorderTab() {
           if (cancelled) return;
           lastProbedDeviceRef.current = 'disabled';
           await window.api.openWebcamOverlay({
-            deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData,
+            deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend,
             enabled: false,
             autoCenter
           });
@@ -730,13 +764,27 @@ export default function RecorderTab() {
       // config changes (slider drags) are now cheap and don't disturb the
       // already-running camera stream.
       await window.api.openWebcamOverlay({
-        deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData,
+        deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend,
         enabled: includeWebcam,
         autoCenter
       });
     })();
     return () => { cancelled = true; };
-  }, [includeWebcam, cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, autoCenter]);
+  }, [includeWebcam, cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, autoCenter, resolvedBackend]);
+
+  // Push the cursor-avoidance toggles into the main process whenever
+  // they change. Main process runs its own ~30fps cursor poll and
+  // smoothly slides / fades the webcam window based on these flags.
+  // Avoidance is gated on recState — the bubble should only dodge the
+  // cursor while a recording is actually running (or paused), never
+  // during idle setup.
+  useEffect(() => {
+    const recordingActive = recState === 'recording' || recState === 'paused';
+    (window as any).api.setWebcamAvoidance?.({
+      autoRelocate: includeWebcam && webcamAutoRelocate && recordingActive,
+      autoOpacity: includeWebcam && webcamAutoOpacity && recordingActive
+    });
+  }, [includeWebcam, webcamAutoRelocate, webcamAutoOpacity, recState]);
 
   // Decode the persisted bg image data URL into an HTMLImageElement that
   // the compositor can draw. Cleared when the user removes the image.
@@ -1094,6 +1142,24 @@ export default function RecorderTab() {
           {includeWebcam && (
             <>
               <div className="row two-col">
+                <label className="row-label">Avoid cursor <Help>When enabled, the floating face-cam slides sideways to get out of the mouse's way and glides back when the cursor clears off. Useful when you're pointing at things behind where the bubble normally sits.</Help></label>
+                <div className="row-ctrl">
+                  <label className="check inline">
+                    <input type="checkbox" checked={webcamAutoRelocate} onChange={(e) => setWebcamAutoRelocate(e.target.checked)} />
+                    Auto relocate face cam
+                  </label>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Fade near cursor <Help>When enabled, the floating face-cam becomes translucent while the mouse is over or near it, and returns to full opacity when the cursor moves away.</Help></label>
+                <div className="row-ctrl">
+                  <label className="check inline">
+                    <input type="checkbox" checked={webcamAutoOpacity} onChange={(e) => setWebcamAutoOpacity(e.target.checked)} />
+                    Auto reduce opacity of face cam
+                  </label>
+                </div>
+              </div>
+              <div className="row two-col">
                 <label className="row-label">Camera <Help>Pick which connected camera to use. Defaults to your system's default camera.</Help></label>
                 <div className="row-ctrl">
                   <select value={cameraId ?? ''} onChange={(e) => setCameraId(e.target.value || undefined)}>
@@ -1133,6 +1199,52 @@ export default function RecorderTab() {
                       {b.label}
                     </button>
                   ))}
+                  {bgMode === 'image' && (
+                    <>
+                      <button className="chip" onClick={() => bgFileInputRef.current?.click()}>
+                        {bgImageData ? 'Change image…' : 'Upload image…'}
+                      </button>
+                      {bgImageData && (
+                        <button
+                          className="chip"
+                          onClick={() => {
+                            bgImageRef.current = null;
+                            setBgImageData(undefined);
+                            compositorRef.current?.setWebcamSettings({ bgImage: null } as any);
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                      <input
+                        ref={bgFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={onPickBgImage}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">
+                  Segmentation <Help>Which model to use for removing your background. Auto picks the highest-quality one your machine can run. Selfie is fastest and most compatible. Multiclass is a newer segmentation model with cleaner hair edges. RVM is real video matting — outputs semi-transparent hair strands, best quality, needs a GPU and downloads a ~15MB model file on first run.</Help>
+                  {segBackendPref === 'auto' && (
+                    <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>→ {resolvedBackend}</span>
+                  )}
+                </label>
+                <div className="row-ctrl">
+                  <select
+                    value={segBackendPref}
+                    onChange={(e) => setSegBackendPref(e.target.value as 'auto' | SegBackendId)}
+                    style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                  >
+                    <option value="auto">Auto (best available)</option>
+                    <option value="selfie">Selfie Segmentation (fast)</option>
+                    <option value="multiclass">Multiclass Segmenter (better edges)</option>
+                    <option value="rvm">RVM Video Matting (best quality, GPU)</option>
+                  </select>
                 </div>
               </div>
               <div className="row two-col">

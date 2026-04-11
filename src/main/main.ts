@@ -1,10 +1,27 @@
-import { app, BrowserWindow, protocol, net, Tray, Menu, nativeImage, ipcMain } from 'electron';
-import { pathToFileURL } from 'url';
+import { app, BrowserWindow, protocol, Tray, Menu, nativeImage, ipcMain } from 'electron';
 import { existsSync } from 'fs';
+import * as fs from 'fs';
 import { join } from 'path';
+
 import { createMainWindow } from './windows';
 import { registerIpc } from './ipc';
 import { registerShortcuts, unregisterShortcuts } from './shortcuts';
+
+// Electron's default app name comes from package.json's `name` field
+// ("qnsub-screenrecorder") unless overridden. That string shows up in
+// the Windows taskbar jump-list and the macOS menu bar, so we force a
+// human-readable name as early as possible — before any window is
+// created and before `app.whenReady` fires. `productName` in
+// package.json only applies to packaged builds (electron-builder), not
+// the dev runtime, which is why we also call setName here.
+app.setName('QNSub Screen Recorder');
+// Windows groups taskbar icons by AppUserModelID. Without an explicit
+// ID, Windows falls back to "Electron" for the grouping label on the
+// right-click / jump list. Setting it to the same id as the installer
+// makes the taskbar show the product name instead.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.qnsub.screenrecorder');
+}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -18,7 +35,18 @@ let isQuitting = false;
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'media',
-    privileges: { standard: true, stream: true, supportFetchAPI: true, bypassCSP: true, secure: true }
+    privileges: {
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      secure: true,
+      // REQUIRED for <video src="media://..."> to actually load.
+      // Without corsEnabled, Chromium's media URL safety check
+      // rejects the load with "Media load rejected by URL safety
+      // check" and the element errors out with code 4.
+      corsEnabled: true
+    }
   }
 ]);
 
@@ -110,15 +138,87 @@ function bootstrap() {
 }
 
 app.whenReady().then(() => {
-  // Serve local files under media:// so <video src="media:///..."> works from
-  // any origin (dev server or packaged renderer).
+  // Serve local files under media:// so <video src="media:///..."> works
+  // from any origin (dev server or packaged renderer). This handler must
+  // respond to HTTP Range requests — <video> elements issue partial
+  // fetches for seeking, and a non-range response causes the video to
+  // fail to load entirely (networkState=NO_SOURCE, readyState=HAVE_NOTHING).
+  // `net.fetch(file://)` doesn't advertise Accept-Ranges on Electron 31, so
+  // we serve the file manually with fs.
   protocol.handle('media', async (request) => {
+    console.log('[media protocol]', request.method, request.url, 'range=', request.headers.get('range') || '-');
     try {
       const u = new URL(request.url);
       let p = decodeURIComponent(u.pathname);
       if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(p)) p = p.slice(1);
-      return net.fetch(pathToFileURL(p).toString());
+      console.log('[media protocol] resolved path', p);
+
+      const stat = await fs.promises.stat(p);
+      const total = stat.size;
+      const range = request.headers.get('range') || request.headers.get('Range');
+
+      const ext = (p.split('.').pop() || '').toLowerCase();
+      const mime =
+        ext === 'mp4' || ext === 'm4v' ? 'video/mp4' :
+        ext === 'webm' ? 'video/webm' :
+        ext === 'mov' ? 'video/quicktime' :
+        ext === 'mkv' ? 'video/x-matroska' :
+        ext === 'avi' ? 'video/x-msvideo' :
+        'application/octet-stream';
+
+      // Range path: buffer the slice into memory and return it as a
+      // plain Response. Electron 31's `protocol.handle` doesn't reliably
+      // accept Node streams — it expects a standard web `Response`, and
+      // polyfilling via `Readable.toWeb` has produced silent hangs on
+      // Windows in testing. Buffering each range chunk is simpler and
+      // <video> only ever requests a few MB at a time.
+      if (range) {
+        const m = /^bytes=(\d+)-(\d*)$/.exec(range.trim());
+        if (m) {
+          const start = parseInt(m[1], 10);
+          const end = m[2] ? parseInt(m[2], 10) : total - 1;
+          if (isNaN(start) || isNaN(end) || start >= total || end >= total || start > end) {
+            return new Response(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${total}` }
+            });
+          }
+          const length = end - start + 1;
+          const fh = await fs.promises.open(p, 'r');
+          try {
+            const buf = Buffer.alloc(length);
+            await fh.read(buf, 0, length, start);
+            return new Response(buf, {
+              status: 206,
+              headers: {
+                'Content-Type': mime,
+                'Content-Length': String(length),
+                'Content-Range': `bytes ${start}-${end}/${total}`,
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'no-cache'
+              }
+            });
+          } finally {
+            await fh.close();
+          }
+        }
+      }
+
+      // No range header. For small files we buffer the whole thing; for
+      // larger files we return a 200 with the entire contents but still
+      // advertise Accept-Ranges so the next <video> request uses ranges.
+      const buf = await fs.promises.readFile(p);
+      return new Response(buf, {
+        status: 200,
+        headers: {
+          'Content-Type': mime,
+          'Content-Length': String(total),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache'
+        }
+      });
     } catch (e: any) {
+      console.error('[media protocol] error serving', request.url, e?.message || e);
       return new Response('Not found', { status: 404 });
     }
   });
