@@ -1,0 +1,160 @@
+QNSub Screen Recorder & Video Editor — Source-Available Commercial License
+Version 1.0, 2026
+
+Copyright (c) 2026 QNSub. All rights reserved.
+
+
+PLAIN-LANGUAGE SUMMARY (not the license itself)
+-----------------------------------------------
+- The source code is published publicly so you can inspect, study, audit,
+  and learn from it.
+- Running the software for anything other than personal evaluation or
+  open-source contribution requires a paid license key from QNSub.
+- A license purchase is a ONE-TIME FEE for the current major version (1.x).
+  You will receive all minor and patch updates (1.1, 1.2, 1.2.3, …) at no
+  additional cost.
+- Future major versions (2.x, 3.x, …) are separate products and require a
+  new license purchase. Your existing 1.x license continues to work
+  indefinitely.
+- NO subscription. Your purchased license does not expire.
+- You may not redistribute, resell, host as a service, or repackage the
+  software without a separate written agreement with QNSub.
+
+If any part of the plain-language summary conflicts with the formal terms
+below, the formal terms control.
+
+
+FORMAL TERMS
+------------
+
+1. DEFINITIONS
+
+   "Software" means the source code, compiled binaries, installers,
+   assets, and documentation contained in this repository and any updates
+   distributed by QNSub under the 1.x major version series.
+
+   "Licensor" means QNSub, the copyright holder.
+
+   "Licensee" means the individual or legal entity that has purchased a
+   valid license key from the Licensor, or who is using the Software
+   solely under the Permitted Free Uses in Section 3.
+
+   "Use" means to install, execute, modify, or otherwise interact with
+   the Software on any device.
+
+
+2. OWNERSHIP
+
+   The Software is licensed, not sold. Licensor retains all right,
+   title, and interest in and to the Software, including all
+   intellectual property rights. No rights are granted to Licensee
+   except those expressly set forth in this license.
+
+
+3. PERMITTED FREE USES
+
+   Without purchasing a license key, any person may:
+
+   (a) View, read, and study the source code.
+   (b) Fork the repository to propose bug fixes or improvements back to
+       the upstream repository as pull requests.
+   (c) Build the Software locally for the sole purpose of personal
+       evaluation for a period of up to thirty (30) days.
+   (d) Use the Software in published academic research, provided that
+       the Software and version are cited.
+
+   Any Use beyond the above requires a paid license key.
+
+
+4. COMMERCIAL LICENSE GRANT
+
+   Upon payment of the applicable one-time fee and receipt of a valid
+   license key, Licensor grants Licensee a worldwide, non-exclusive,
+   non-transferable, non-sublicensable, perpetual license to Use the
+   current major version of the Software (1.x) on devices owned or
+   controlled by the Licensee, subject to the restrictions in Section 5.
+
+   A single license key authorizes Use by one (1) natural person across
+   any number of their personal devices. Organizations must purchase one
+   license per individual user.
+
+   The license does not expire. Licensor will provide minor and patch
+   updates within the 1.x major version series at no additional charge.
+
+
+5. RESTRICTIONS
+
+   Licensee shall NOT:
+
+   (a) Redistribute, sell, sublicense, rent, lease, lend, or host the
+       Software — in source or binary form — to any third party.
+   (b) Offer the Software, or any derivative of it, as a hosted,
+       managed, or software-as-a-service offering.
+   (c) Remove, alter, or obscure any copyright, trademark, or license
+       notice in the Software.
+   (d) Use the Software to build a competing product intended for
+       commercial distribution.
+   (e) Share, publish, or transfer a purchased license key.
+   (f) Circumvent any license enforcement mechanism included in the
+       Software.
+
+   Contributions submitted as pull requests are licensed to the
+   Licensor under this license and become part of the Software.
+
+
+6. MAJOR VERSIONS
+
+   This license applies exclusively to the 1.x major version series.
+   Version 2.0 and later are separate works and are governed by their
+   own license terms. A 1.x license holder is under no obligation to
+   upgrade and may continue using 1.x indefinitely.
+
+
+7. TERMINATION
+
+   This license terminates automatically if Licensee breaches any of
+   its terms. Upon termination, Licensee must cease all Use of the
+   Software and destroy all copies in their possession. Sections 2, 5,
+   8, 9, and 10 survive termination.
+
+
+8. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT,
+   OR THAT THE SOFTWARE WILL BE ERROR-FREE OR UNINTERRUPTED.
+
+
+9. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. IN NO EVENT
+   SHALL LICENSOR'S TOTAL LIABILITY EXCEED THE AMOUNT PAID BY LICENSEE
+   FOR THE APPLICABLE LICENSE KEY.
+
+
+10. THIRD-PARTY COMPONENTS
+
+    The Software incorporates third-party open-source components (for
+    example Electron, React, MediaPipe, and ffmpeg). Those components
+    remain governed by their original open-source licenses, which can
+    be found in the NOTICE file or in the respective package
+    directories. Nothing in this license overrides the rights granted
+    to you by those underlying licenses with respect to those
+    components.
+
+
+11. MISCELLANEOUS
+
+    This license constitutes the entire agreement between Licensor and
+    Licensee concerning the Software. If any provision is held
+    unenforceable, the remainder remains in force. Licensor may update
+    the terms for future releases; the version of this license that
+    accompanies a given release governs that release.
+
+
+To purchase a license key, contact QNSub at the address published in
+the project's README.md.

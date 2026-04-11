@@ -41,6 +41,7 @@
     "files": [
       "dist/**",
       "resources/**",
+      "tray-icon.png",
       "package.json"
     ],
     "asarUnpack": [
@@ -48,8 +49,7 @@
       "resources/**"
     ],
     "win": {
-      "target": "nsis",
-      "icon": "build/icon.ico"
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,

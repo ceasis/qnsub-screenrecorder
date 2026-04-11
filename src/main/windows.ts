@@ -3,7 +3,7 @@ import { join } from 'path';
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
 
-function rendererUrl(page: 'main' | 'region' | 'annotation' | 'countdown'): string {
+function rendererUrl(page: 'main' | 'region' | 'annotation' | 'countdown' | 'webcam' | 'idiotboard'): string {
   if (isDev) {
     const base = process.env['ELECTRON_RENDERER_URL']!;
     return page === 'main' ? `${base}/index.html` : `${base}/${page}.html`;
@@ -12,8 +12,78 @@ function rendererUrl(page: 'main' | 'region' | 'annotation' | 'countdown'): stri
   return `file://${join(__dirname, '../renderer', file)}`;
 }
 
-function preload(name: 'main' | 'region' | 'annotation' | 'countdown'): string {
+export function createWebcamWindow(): BrowserWindow {
+  const primary = screen.getPrimaryDisplay();
+  const size = 360;
+  const margin = 32;
+  const win = new BrowserWindow({
+    width: size,
+    height: size,
+    x: Math.round(primary.bounds.x + primary.bounds.width - size - margin),
+    y: Math.round(primary.bounds.y + primary.bounds.height - size - margin),
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    skipTaskbar: true,
+    resizable: false,
+    movable: true,
+    focusable: true,
+    webPreferences: {
+      preload: preload('webcam'),
+      contextIsolation: true,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // The webcam overlay is already baked into the recorded canvas by the
+  // compositor. Hide this floating window from screen-capture APIs so it
+  // does NOT appear twice in the final recording.
+  try { win.setContentProtection(true); } catch {}
+  win.loadURL(rendererUrl('webcam'));
+  return win;
+}
+
+function preload(name: 'main' | 'region' | 'annotation' | 'countdown' | 'webcam' | 'idiotboard'): string {
   return join(__dirname, '../preload', `${name}.preload.js`);
+}
+
+export function createIdiotBoardWindow(): BrowserWindow {
+  const primary = screen.getPrimaryDisplay();
+  const width = 380;
+  const height = 300;
+  const margin = 32;
+  const win = new BrowserWindow({
+    width,
+    height,
+    x: Math.round(primary.bounds.x + margin),
+    y: Math.round(primary.bounds.y + primary.bounds.height - height - margin),
+    minWidth: 240,
+    minHeight: 180,
+    transparent: true,
+    frame: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    skipTaskbar: true,
+    resizable: true,
+    movable: true,
+    focusable: true,
+    title: 'Idiot Board',
+    webPreferences: {
+      preload: preload('idiotboard'),
+      contextIsolation: true,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  });
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // Hide from screen capture so notes never appear in recordings.
+  try { win.setContentProtection(true); } catch {}
+  win.loadURL(rendererUrl('idiotboard'));
+  return win;
 }
 
 export function createMainWindow(): BrowserWindow {
@@ -35,10 +105,6 @@ export function createMainWindow(): BrowserWindow {
   });
 
   win.loadURL(rendererUrl('main'));
-
-  if (isDev) {
-    win.webContents.openDevTools({ mode: 'detach' });
-  }
 
   return win;
 }

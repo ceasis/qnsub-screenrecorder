@@ -1,0 +1,87 @@
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: #e6edf3;
+  overflow: hidden;
+}
+
+.idiot-root {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 22, 28, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.idiot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  -webkit-app-region: drag;
+  user-select: none;
+  cursor: move;
+}
+
+.idiot-root { cursor: default; }
+.idiot-text { cursor: text; }
+.idiot-btn { cursor: pointer; }
+
+.idiot-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #ffd84a;
+}
+
+.idiot-controls {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.idiot-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e6edf3;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  min-width: 26px;
+}
+.idiot-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.idiot-close { color: #ff7a7a; }
+.idiot-close:hover { background: rgba(255, 90, 90, 0.22); }
+
+.idiot-text {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: #f1f5f9;
+  padding: 12px 14px;
+  line-height: 1.45;
+  font-family: 'Segoe UI', Roboto, sans-serif;
+}
+.idiot-text::placeholder { color: rgba(255, 255, 255, 0.35); }
+
+.idiot-footer {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 4px 10px 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: center;
+}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { AnnotationColor, Arrow } from '../../shared/types';
+import type { AnnotationColor, Arrow, ArrowStyle } from '../../shared/types';
 import { COLOR_HEX } from '../../shared/types';
+import { drawAnnotation } from '../lib/arrowDraw';
 
 declare global {
   interface Window {
@@ -8,6 +9,9 @@ declare global {
       setClickthrough: (ct: boolean) => void;
       sendArrow: (a: Arrow) => void;
       onColor: (cb: (c: AnnotationColor) => void) => () => void;
+      onThickness: (cb: (t: number) => void) => () => void;
+      onOutline: (cb: (c: AnnotationColor | null) => void) => () => void;
+      onStyle: (cb: (s: ArrowStyle) => void) => () => void;
     };
   }
 }
@@ -15,6 +19,9 @@ declare global {
 export default function Annotation() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [color, setColor] = useState<AnnotationColor>('red');
+  const [thickness, setThickness] = useState<number>(6);
+  const [outline, setOutline] = useState<AnnotationColor | null>(null);
+  const [arrowStyle, setArrowStyle] = useState<ArrowStyle>('arrow');
   const [ctrl, setCtrl] = useState(false);
   const drawing = useRef<{ x: number; y: number } | null>(null);
   const arrowsRef = useRef<Arrow[]>([]);
@@ -71,6 +78,21 @@ export default function Annotation() {
     return off;
   }, []);
 
+  useEffect(() => {
+    const off = window.annotationApi.onThickness((t) => setThickness(t));
+    return off;
+  }, []);
+
+  useEffect(() => {
+    const off = window.annotationApi.onOutline((c) => setOutline(c));
+    return off;
+  }, []);
+
+  useEffect(() => {
+    const off = window.annotationApi.onStyle((s) => setArrowStyle(s));
+    return off;
+  }, []);
+
   // Auto-expire old arrows from the overlay after 6s
   useEffect(() => {
     const iv = setInterval(() => {
@@ -106,6 +128,9 @@ export default function Annotation() {
       x2: e.clientX,
       y2: e.clientY,
       color,
+      thickness,
+      outline: outline ?? undefined,
+      style: arrowStyle,
       createdAt: Date.now()
     };
     redraw(preview);
@@ -119,6 +144,9 @@ export default function Annotation() {
       x2: e.clientX,
       y2: e.clientY,
       color,
+      thickness,
+      outline: outline ?? undefined,
+      style: arrowStyle,
       createdAt: Date.now()
     };
     drawing.current = null;
@@ -145,23 +173,5 @@ export default function Annotation() {
 }
 
 function drawArrow(ctx: CanvasRenderingContext2D, a: Arrow) {
-  const { x1, y1, x2, y2 } = a;
-  ctx.save();
-  ctx.strokeStyle = COLOR_HEX[a.color];
-  ctx.fillStyle = COLOR_HEX[a.color];
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-  const angle = Math.atan2(y2 - y1, x2 - x1);
-  const h = 18;
-  ctx.beginPath();
-  ctx.moveTo(x2, y2);
-  ctx.lineTo(x2 - h * Math.cos(angle - Math.PI / 6), y2 - h * Math.sin(angle - Math.PI / 6));
-  ctx.lineTo(x2 - h * Math.cos(angle + Math.PI / 6), y2 - h * Math.sin(angle + Math.PI / 6));
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
+  drawAnnotation(ctx, a);
 }

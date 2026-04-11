@@ -1,0 +1,358 @@
+html, body, #root {
+  margin: 0; padding: 0;
+  width: 100vw; height: 100vh;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+  user-select: none;
+  color: #e6edf3;
+  font-size: 12px;
+}
+
+.webcam-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px;
+  /* drag the window from any empty region */
+  -webkit-app-region: drag;
+}
+
+/* Toolbar with 3-dot menu button */
+.toolbar {
+  display: flex;
+  justify-content: center;
+  height: 24px;
+  margin-bottom: 1px;
+  width: 100%;
+  -webkit-app-region: drag;
+}
+/* When the toolbar is rendered beneath the bubble (new layout), flip the
+   margin so it sits flush below instead of flush above. */
+.toolbar.toolbar-bottom {
+  margin-bottom: 0;
+  margin-top: 6px;
+}
+.dots {
+  -webkit-app-region: no-drag;
+  width: 58px;
+  height: 26px;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 0;
+  backdrop-filter: blur(6px);
+  transition: background 0.12s, transform 0.08s;
+}
+.dots:hover { background: rgba(20, 26, 36, 0.95); }
+.dots:active { transform: translateY(1px); }
+.dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 6px rgba(196, 152, 255, 0.7);
+}
+.dots span:nth-child(1) { background: linear-gradient(135deg, #d8baff 0%, #b48bff 100%); }
+.dots span:nth-child(2) { background: linear-gradient(135deg, #c79cff 0%, #9a6bff 100%); }
+.dots span:nth-child(3) { background: linear-gradient(135deg, #b685ff 0%, #8855ff 100%); }
+
+/* Wrapper so the translucent drag handle can overlay the bubble without
+   touching the bubble element itself (adding position/children to an
+   element that also carries -webkit-app-region: drag confuses Chromium's
+   hit-testing and breaks window drag). */
+.bubble-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+/* The live video bubble — clicking it drags the whole window. */
+.bubble {
+  -webkit-app-region: drag;
+  cursor: move;
+  filter: drop-shadow(0 8px 26px rgba(0, 0, 0, 0.55));
+}
+.bubble canvas { display: block; }
+
+/* Cluster of [-] [center] [+] controls overlaid on the bubble. Shown on
+   hover only so it doesn't obscure the face during recording. */
+.handle-cluster {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 5;
+}
+.bubble-wrap:hover .handle-cluster { opacity: 0.95; }
+.handle-cluster:hover { opacity: 1 !important; }
+
+.drag-handle {
+  -webkit-app-region: no-drag;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  transition: background 0.15s ease;
+}
+.drag-handle:active { cursor: grabbing; background: rgba(0, 0, 0, 0.7); }
+.drag-handle svg { width: 24px; height: 24px; opacity: 0.95; }
+
+.zoom-btn {
+  -webkit-app-region: no-drag;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s ease, transform 0.08s;
+  font-family: inherit;
+}
+.zoom-btn:hover { background: rgba(0, 0, 0, 0.72); }
+.zoom-btn:active { transform: scale(0.92); }
+
+/* When the webcam is disabled, tint the dots cluster green so the user
+   can tell at a glance that clicking it brings the camera back. */
+.webcam-root.cam-off .dots {
+  background: rgba(46, 204, 113, 0.22);
+  border-color: rgba(46, 204, 113, 0.55);
+}
+.webcam-root.cam-off .dots:hover { background: rgba(46, 204, 113, 0.34); }
+.webcam-root.cam-off .dots span {
+  background: linear-gradient(135deg, #b8f5d2 0%, #2ecc71 100%);
+}
+
+/* Embedded recording HUD — sits beneath the bubble. Was previously a
+   separate floating window; merged into the webcam window so the user has
+   one floating control surface instead of two. */
+.embedded-ctrl {
+  -webkit-app-region: no-drag;
+  margin-top: 8px;
+  height: 28px;
+  padding: 0 10px;
+  background: rgba(12, 16, 22, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+}
+.ec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #666;
+  flex: 0 0 auto;
+}
+.ec-dot.recording {
+  background: #ff3b30;
+  box-shadow: 0 0 8px rgba(255, 59, 48, 0.85);
+  animation: ec-pulse 1.3s ease-in-out infinite;
+}
+.ec-dot.paused { background: #ffb84f; }
+.ec-dot.finalizing {
+  background: #4f8cff;
+  box-shadow: 0 0 8px rgba(79, 140, 255, 0.85);
+  animation: ec-pulse 1s ease-in-out infinite;
+}
+@keyframes ec-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.ec-timer {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6edf3;
+  flex: 1;
+  text-align: center;
+  letter-spacing: 0.3px;
+  line-height: 1;
+}
+.embedded-ctrl.recording  .ec-timer { color: #ff5a5a; }
+.embedded-ctrl.paused     .ec-timer { color: #ffb84f; }
+.embedded-ctrl.finalizing .ec-timer { color: #4f8cff; font-size: 11px; }
+.ec-progress {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  min-width: 50px;
+}
+.ec-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f8cff, #6aa7ff);
+  box-shadow: 0 0 6px rgba(79, 140, 255, 0.6);
+  transition: width 0.18s ease;
+}
+.ec-buttons { display: flex; gap: 4px; flex: 0 0 auto; }
+.ec-btn {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e6edf3;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, transform 0.08s;
+}
+.ec-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.ec-btn:active { transform: translateY(1px); }
+.ec-btn svg { display: block; }
+.ec-btn.start  { color: #2ecc71; background: rgba(46, 204, 113, 0.18); border-color: rgba(46, 204, 113, 0.55); }
+.ec-btn.start:hover { background: rgba(46, 204, 113, 0.32); }
+.ec-btn.pause  { color: #ffb84f; background: rgba(255, 184, 79, 0.16); border-color: rgba(255, 184, 79, 0.55); }
+.ec-btn.pause:hover { background: rgba(255, 184, 79, 0.28); }
+.ec-btn.stop   { color: #ff5a5a; background: rgba(255, 90, 90, 0.16); border-color: rgba(255, 90, 90, 0.55); }
+.ec-btn.stop:hover  { background: rgba(255, 90, 90, 0.28); }
+
+/* Config panel shown under the bubble when 3-dots is clicked. Sits below
+   the bubble in normal flex flow — the Electron window is resized taller
+   when it opens so the panel never overlaps or clips the bubble. */
+.config-panel {
+  -webkit-app-region: no-drag;
+  margin-top: 10px;
+  width: 280px;
+  background: rgba(12, 16, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 10;
+}
+.config-panel.closed {
+  display: none;
+}
+
+.cp-section { display: flex; flex-direction: column; gap: 5px; }
+.cp-section label {
+  color: #8b95a5;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 6px;
+}
+.cp-section label .val {
+  color: #e6edf3;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.cp-section label .val::before { content: ': '; }
+
+.cp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.cp-chip {
+  -webkit-app-region: no-drag;
+  font: inherit;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e6edf3;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.cp-chip:hover { background: rgba(255, 255, 255, 0.1); }
+.cp-chip.sel {
+  background: rgba(79, 140, 255, 0.25);
+  border-color: #4f8cff;
+  color: #eaf1ff;
+}
+
+.cp-bg-upload {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+/* Greyed-out section when its control is overridden by another setting
+   (e.g. Face light is disabled while Auto-center is on). */
+.cp-section.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.cp-section.disabled label,
+.cp-section.disabled input { cursor: not-allowed; }
+
+/* Inline help text under a section header. */
+.cp-hint {
+  font-size: 10px;
+  color: #8b95a5;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+/* Drag handle in the bubble's centre cluster — when auto-center is on
+   we tint it green so the user knows the manual pan is overridden. */
+.drag-handle.disabled {
+  cursor: not-allowed;
+  background: rgba(46, 204, 113, 0.18);
+  border-color: rgba(46, 204, 113, 0.55);
+  color: rgba(255, 255, 255, 0.55);
+}
+.drag-handle.disabled:active {
+  cursor: not-allowed;
+  background: rgba(46, 204, 113, 0.18);
+}
+
+/* Native range inputs in Chromium include a thumb that extends past the
+   track's content box, so a 100%-wide slider visually overflows the
+   panel's padding on both ends. Shrink the slider to leave room for the
+   thumb on each side, and centre it within its section. */
+.config-panel input[type="range"] {
+  display: block;
+  width: calc(95% - 16px);
+  max-width: calc(95% - 16px);
+  min-width: 0;
+  box-sizing: border-box;
+  margin: 2px 0;
+  padding: 0;
+  accent-color: #4f8cff;
+  -webkit-app-region: no-drag;
+}
+.cp-section { min-width: 0; }

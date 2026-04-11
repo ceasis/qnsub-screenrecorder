@@ -16,10 +16,15 @@ export default defineConfig({
       outDir: 'dist/preload',
       rollupOptions: {
         input: {
-          main: resolve(__dirname, 'src/preload/main.preload.ts'),
-          region: resolve(__dirname, 'src/preload/region.preload.ts'),
-          annotation: resolve(__dirname, 'src/preload/annotation.preload.ts'),
-          countdown: resolve(__dirname, 'src/preload/countdown.preload.ts')
+          'main.preload': resolve(__dirname, 'src/preload/main.preload.ts'),
+          'region.preload': resolve(__dirname, 'src/preload/region.preload.ts'),
+          'annotation.preload': resolve(__dirname, 'src/preload/annotation.preload.ts'),
+          'countdown.preload': resolve(__dirname, 'src/preload/countdown.preload.ts'),
+          'webcam.preload': resolve(__dirname, 'src/preload/webcam.preload.ts'),
+          'idiotboard.preload': resolve(__dirname, 'src/preload/idiotboard.preload.ts')
+        },
+        output: {
+          entryFileNames: '[name].js'
         }
       }
     }
@@ -34,7 +39,9 @@ export default defineConfig({
           main: resolve(__dirname, 'src/renderer/index.html'),
           region: resolve(__dirname, 'src/renderer/region.html'),
           annotation: resolve(__dirname, 'src/renderer/annotation.html'),
-          countdown: resolve(__dirname, 'src/renderer/countdown.html')
+          countdown: resolve(__dirname, 'src/renderer/countdown.html'),
+          webcam: resolve(__dirname, 'src/renderer/webcam.html'),
+          idiotboard: resolve(__dirname, 'src/renderer/idiotboard.html')
         }
       }
     },
