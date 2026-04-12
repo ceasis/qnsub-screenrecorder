@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
-    "@mediapipe/tasks-vision": "^0.10.14",
+    "@mediapipe/tasks-vision": "0.10.34",
     "ffmpeg-static": "^5.2.0",
     "onnxruntime-web": "^1.19.2",
     "react": "^18.3.1",

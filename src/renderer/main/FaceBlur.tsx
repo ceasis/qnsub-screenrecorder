@@ -23,7 +23,7 @@
 //        - draw the video into a canvas at the chosen output size
 //        - sample each selected track's interpolated rect at the
 //          current video time
-//        - apply a box-blur inside each rect on the canvas
+//        - apply a strong GPU-backed canvas filter blur inside each rect
 //        - push a `track.requestFrame()` into the MediaRecorder
 //      MediaRecorder produces a WebM stream that gets piped straight
 //      to ffmpeg, so by the time the playback ends the MP4 is almost
@@ -35,6 +35,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { detectFaces, initFaceDetector, type FaceDetection } from '../lib/faceDetect';
 import { FaceTrackerSession, sampleTrackAt, type FaceTrack } from '../lib/faceTracker';
+import { drawObscuredFaceFromVideo, paddedFaceRect } from '../lib/faceBlurObscure';
+
+/** Same folder as source: `clip.mp4` → `clip-blurred-1430.mp4` (local HHMM). */
+function blurOutputPathFromSource(sourcePath: string): string {
+  const lastSep = Math.max(sourcePath.lastIndexOf('/'), sourcePath.lastIndexOf('\\'));
+  const dir = lastSep >= 0 ? sourcePath.slice(0, lastSep + 1) : '';
+  const base = lastSep >= 0 ? sourcePath.slice(lastSep + 1) : sourcePath;
+  const dot = base.lastIndexOf('.');
+  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const ext = dot > 0 ? base.slice(dot) : '.mp4';
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${dir}${stem}-blurred-${hh}${mm}${ext}`;
+}
 
 type Phase = 'idle' | 'detecting' | 'ready' | 'exporting' | 'done' | 'error';
 
@@ -44,7 +59,6 @@ type Phase = 'idle' | 'detecting' | 'ready' | 'exporting' | 'done' | 'error';
 // TS2717 across files.
 type BlurApi = {
   pickBlurVideo: () => Promise<{ path: string; name: string } | null>;
-  pickBlurOutput: (suggestedName: string) => Promise<string | null>;
   blurStreamStart: (opts: { outputPath: string; fps?: number }) => Promise<{ ok: boolean; sessionId?: string; outputPath?: string; error?: string }>;
   blurStreamChunk: (sessionId: string, bytes: ArrayBuffer) => Promise<boolean>;
   blurStreamStop: (sessionId: string, openAfter?: boolean) => Promise<{ ok: boolean; path?: string; error?: string }>;
@@ -64,14 +78,16 @@ export default function FaceBlurTab() {
   const [statusMsg, setStatusMsg] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [outputPath, setOutputPath] = useState<string | null>(null);
-  // Blur strength in CSS pixels. The actual filter is scaled by the
-  // box size at export time so small faces still look blurred.
-  const [blurStrength, setBlurStrength] = useState<number>(24);
+  // Blur strength (8–120): drives Canvas2D `filter: blur()` radius, scaled by face size.
+  const [blurStrength, setBlurStrength] = useState<number>(48);
+  const [sourceMetaLine, setSourceMetaLine] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const abortRef = useRef<boolean>(false);
+  /** Suppresses auto-detect if `loadedmetadata` fires mid-export (rare). */
+  const exportingRef = useRef(false);
 
   // Average wall-clock time (ms) per detection sample. Populated by
   // `detectAllFaces` and reused to estimate export duration. The
@@ -92,6 +108,7 @@ export default function FaceBlurTab() {
     setErrorMsg('');
     setOutputPath(null);
     setAvgSampleMs(0);
+    setSourceMetaLine(null);
     autoDetectedForPathRef.current = null;
   }
 
@@ -206,7 +223,15 @@ export default function FaceBlurTab() {
             duration: v.duration,
             readyState: v.readyState
           });
+          if (v.videoWidth > 0 && v.videoHeight > 0 && isFinite(v.duration) && v.duration > 0) {
+            setSourceMetaLine(
+              `${v.videoWidth}×${v.videoHeight} · ${formatDuration(Math.round(v.duration))}`
+            );
+          } else {
+            setSourceMetaLine(null);
+          }
           if (
+            !exportingRef.current &&
             videoPath &&
             autoDetectedForPathRef.current !== videoPath &&
             v.videoWidth > 0 &&
@@ -265,10 +290,7 @@ export default function FaceBlurTab() {
   //   - `loadeddata` (initial first frame)
   //   - selection/strength/track changes (React effect re-run)
   //
-  // For each blur rect we draw a shrunk copy of the underlying video
-  // into a scratch canvas and blit it back, producing the same
-  // pixelation the export pipeline uses — so what you see is what
-  // you'll get.
+  // Same Gaussian-style blur as export (`faceBlurObscure.ts`).
   useEffect(() => {
     const v = videoRef.current;
     const c = overlayCanvasRef.current;
@@ -282,8 +304,6 @@ export default function FaceBlurTab() {
       return;
     }
 
-    const scratch = document.createElement('canvas');
-    const scratchCtx = scratch.getContext('2d')!;
     const selectedTracksArr = tracks.filter((tr) => selected.has(tr.id));
 
     const draw = () => {
@@ -299,32 +319,12 @@ export default function FaceBlurTab() {
       for (const track of selectedTracksArr) {
         const rect = sampleTrackAt(track, t);
         if (!rect) continue;
-        const pad = 0.2;
-        const cx = rect.x + rect.width / 2;
-        const cy = rect.y + rect.height / 2;
-        const bw = rect.width * (1 + pad * 2);
-        const bh = rect.height * (1 + pad * 2);
-        const bx = Math.max(0, cx - bw / 2);
-        const by = Math.max(0, cy - bh / 2);
-        const bx2 = Math.min(c.width, bx + bw);
-        const by2 = Math.min(c.height, by + bh);
-        const rw = bx2 - bx;
-        const rh = by2 - by;
-        if (rw <= 0 || rh <= 0) continue;
-        const strength = Math.max(6, Math.round(blurStrength * Math.max(rw, rh) / 200));
-        const sw = Math.max(2, Math.floor(rw / strength));
-        const sh = Math.max(2, Math.floor(rh / strength));
-        if (scratch.width !== sw || scratch.height !== sh) {
-          scratch.width = sw;
-          scratch.height = sh;
-        }
+        const pr = paddedFaceRect(rect, c.width, c.height);
+        if (pr.width < 2 || pr.height < 2) continue;
         try {
-          scratchCtx.drawImage(v, bx, by, rw, rh, 0, 0, sw, sh);
-          ctx.drawImage(scratch, 0, 0, sw, sh, bx, by, rw, rh);
+          drawObscuredFaceFromVideo(ctx, v, pr.x, pr.y, pr.width, pr.height, pr.x, pr.y, pr.width, pr.height, blurStrength);
         } catch {
-          // drawImage can throw briefly during seeks if the video
-          // hasn't committed a frame yet — harmless, next tick
-          // will redraw.
+          /* seek race */
         }
       }
     };
@@ -387,6 +387,7 @@ export default function FaceBlurTab() {
       );
       setPhase('error');
     };
+    setPhase('detecting');
     window.addEventListener('unhandledrejection', origRejection);
     try {
       await detectAllFacesInner();
@@ -469,11 +470,11 @@ export default function FaceBlurTab() {
       return;
     }
 
-    // Sampling density: ~6 detections per second of video. Tracker
-    // fills the gaps via linear interpolation, which is accurate
-    // enough for face-blur rectangles at any reasonable playback speed.
-    const SAMPLES_PER_SEC = 6;
-    const totalSamples = Math.max(2, Math.floor(duration * SAMPLES_PER_SEC));
+    // Denser temporal sampling improves recall (brief shots, crowd cuts).
+    // Cap total seeks so very long files stay usable (~2 min pass budget target).
+    const SAMPLES_PER_SEC = 15;
+    const MAX_SAMPLES = 2200;
+    const totalSamples = Math.max(2, Math.min(MAX_SAMPLES, Math.floor(duration * SAMPLES_PER_SEC)));
     const stepSec = duration / totalSamples;
 
     // Scratch canvas for thumbnail cropping — created once.
@@ -485,14 +486,14 @@ export default function FaceBlurTab() {
 
     const makeThumbnail = (d: FaceDetection): string => {
       if (!v.videoWidth) return '';
-      const pad = 0.2;
-      const cx = d.x + d.width / 2;
-      const cy = d.y + d.height / 2;
-      const side = Math.max(d.width, d.height) * (1 + pad * 2);
-      const sx = Math.max(0, cx - side / 2);
-      const sy = Math.max(0, cy - side / 2);
-      const sw = Math.min(v.videoWidth - sx, side);
-      const sh = Math.min(v.videoHeight - sy, side);
+      const pr = paddedFaceRect({ x: d.x, y: d.y, width: d.width, height: d.height }, v.videoWidth, v.videoHeight);
+      const side = Math.max(pr.width, pr.height);
+      const cx = pr.x + pr.width / 2;
+      const cy = pr.y + pr.height / 2;
+      const sx = Math.max(0, Math.min(v.videoWidth - side, cx - side / 2));
+      const sy = Math.max(0, Math.min(v.videoHeight - side, cy - side / 2));
+      const sw = Math.min(side, v.videoWidth - sx);
+      const sh = Math.min(side, v.videoHeight - sy);
       thumbCtx.clearRect(0, 0, THUMB_SIZE, THUMB_SIZE);
       try {
         thumbCtx.drawImage(v, sx, sy, sw, sh, 0, 0, THUMB_SIZE, THUMB_SIZE);
@@ -520,25 +521,23 @@ export default function FaceBlurTab() {
     //      containers never fires `seeked`.
     const seekTo = (t: number) =>
       new Promise<void>((resolve) => {
-        let settled = false;
+        let seekedReceived = false;
         const onSeeked = () => {
-          if (settled) return;
-          settled = true;
+          if (seekedReceived) return;
+          seekedReceived = true;
           v.removeEventListener('seeked', onSeeked);
-          const vAny = v as HTMLVideoElement & {
-            requestVideoFrameCallback?: (cb: () => void) => number;
-          };
-          if (typeof vAny.requestVideoFrameCallback === 'function') {
-            vAny.requestVideoFrameCallback(() => resolve());
-          } else {
-            setTimeout(resolve, 16);
-          }
+          // Do NOT rely on requestVideoFrameCallback here: this pass keeps the
+          // video paused, and Chromium/Electron often never runs rVFC callbacks
+          // while paused — the promise would hang forever after "first seek".
+          requestAnimationFrame(() => {
+            setTimeout(resolve, 32);
+          });
         };
         v.addEventListener('seeked', onSeeked);
         // Safety timeout so a failed seek can't hang the whole pass.
         setTimeout(() => {
-          if (settled) return;
-          settled = true;
+          if (seekedReceived) return;
+          seekedReceived = true;
           v.removeEventListener('seeked', onSeeked);
           resolve();
         }, 1500);
@@ -605,11 +604,9 @@ export default function FaceBlurTab() {
     const perSampleMs = totalSamples > 0 ? passElapsedMs / totalSamples : 0;
     setAvgSampleMs(perSampleMs);
 
-    // Loosen the min-length threshold if the pass found very few
-    // samples overall — on short videos (say, a 3-second clip) even
-    // a genuine face only gets a handful of samples, so requiring 3
-    // rejects everything.
-    const minLen = totalDetections < 20 ? 1 : totalDetections < 60 ? 2 : 3;
+    // Keep shorter tracks when the pass is sparse — avoids dropping
+    // people who only appear in a few sampled frames.
+    const minLen = totalDetections < 45 ? 1 : totalDetections < 110 ? 2 : 3;
     const finalTracks = tracker.finalize(minLen);
     console.log(`[FaceBlur] detection done: ${totalDetections} hits → ${finalTracks.length} tracks (minLen=${minLen})`);
     setTracks(finalTracks);
@@ -618,7 +615,7 @@ export default function FaceBlurTab() {
     setStatusMsg(
       finalTracks.length === 0
         ? `No faces found (${totalDetections} detections across ${totalSamples} samples). Try a different clip or ensure faces are well-lit and facing the camera.`
-        : `Found ${finalTracks.length} face${finalTracks.length === 1 ? '' : 's'} (${totalDetections} total detections).`
+        : `Found ${finalTracks.length} track${finalTracks.length === 1 ? '' : 's'} (${totalDetections} raw detections). Deselect logos or false hits before export.`
     );
     setPhase('ready');
     try { v.currentTime = 0; } catch {}
@@ -648,9 +645,7 @@ export default function FaceBlurTab() {
       return;
     }
 
-    const suggested = (videoName || 'blurred.mp4').replace(/\.[^.]+$/, '') + '_blurred.mp4';
-    const out = await api.pickBlurOutput(suggested);
-    if (!out) return;
+    const out = blurOutputPathFromSource(videoPath);
     setOutputPath(out);
 
     v.pause();
@@ -669,9 +664,6 @@ export default function FaceBlurTab() {
     canvas.width = outW;
     canvas.height = outH;
     const ctx = canvas.getContext('2d', { alpha: false })!;
-
-    const blurCanvas = document.createElement('canvas');
-    const blurCtx = blurCanvas.getContext('2d')!;
 
     const FPS = 30;
 
@@ -720,7 +712,9 @@ export default function FaceBlurTab() {
       pendingChunks.push(p);
     };
 
-    setPhase('exporting');
+    exportingRef.current = true;
+    try {
+      setPhase('exporting');
     setProgress(0);
     setStatusMsg('Rendering blurred video…');
     abortRef.current = false;
@@ -739,33 +733,13 @@ export default function FaceBlurTab() {
       for (const track of selectedTracks) {
         const rect = sampleTrackAt(track, srcTime);
         if (!rect) continue;
-        const pad = 0.2;
-        const cx = (rect.x + rect.width / 2) * scaleX;
-        const cy = (rect.y + rect.height / 2) * scaleY;
-        const bw = rect.width * scaleX * (1 + pad * 2);
-        const bh = rect.height * scaleY * (1 + pad * 2);
-        const bx = Math.max(0, cx - bw / 2);
-        const by = Math.max(0, cy - bh / 2);
-        const bx2 = Math.min(outW, bx + bw);
-        const by2 = Math.min(outH, by + bh);
-        const rw = bx2 - bx;
-        const rh = by2 - by;
-        if (rw <= 0 || rh <= 0) continue;
-
-        const strength = Math.max(6, Math.round(blurStrength * Math.max(rw, rh) / 200));
-        const shrinkW = Math.max(2, Math.floor(rw / strength));
-        const shrinkH = Math.max(2, Math.floor(rh / strength));
-        if (blurCanvas.width !== shrinkW || blurCanvas.height !== shrinkH) {
-          blurCanvas.width = shrinkW;
-          blurCanvas.height = shrinkH;
-        }
-        blurCtx.clearRect(0, 0, shrinkW, shrinkH);
-        blurCtx.drawImage(canvas, bx, by, rw, rh, 0, 0, shrinkW, shrinkH);
-        ctx.save();
-        (ctx as any).imageSmoothingEnabled = true;
-        (ctx as any).imageSmoothingQuality = 'high';
-        ctx.drawImage(blurCanvas, 0, 0, shrinkW, shrinkH, bx, by, rw, rh);
-        ctx.restore();
+        const padV = paddedFaceRect(rect, srcW, srcH);
+        const dx = padV.x * scaleX;
+        const dy = padV.y * scaleY;
+        const dw = padV.width * scaleX;
+        const dh = padV.height * scaleY;
+        if (dw < 2 || dh < 2) continue;
+        drawObscuredFaceFromVideo(ctx, v, padV.x, padV.y, padV.width, padV.height, dx, dy, dw, dh, blurStrength);
       }
 
       const pv = previewCanvasRef.current;
@@ -775,16 +749,13 @@ export default function FaceBlurTab() {
       }
     };
 
-    const vAny = v as HTMLVideoElement & {
-      requestVideoFrameCallback?: (cb: () => void) => number;
-    };
-    const waitForFrameCommit = () =>
+    // Paused export: never use requestVideoFrameCallback after seek — it
+    // often never fires while paused (same Chromium issue as detection).
+    const waitAfterSeeked = () =>
       new Promise<void>((resolve) => {
-        if (typeof vAny.requestVideoFrameCallback === 'function') {
-          vAny.requestVideoFrameCallback!(() => resolve());
-        } else {
-          setTimeout(resolve, 16);
-        }
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 32);
+        });
       });
 
     const seekTo = (t: number) =>
@@ -794,7 +765,7 @@ export default function FaceBlurTab() {
           if (settled) return;
           settled = true;
           v.removeEventListener('seeked', onSeeked);
-          waitForFrameCommit().then(() => resolve());
+          waitAfterSeeked().then(() => resolve());
         };
         v.addEventListener('seeked', onSeeked);
         setTimeout(() => {
@@ -811,19 +782,25 @@ export default function FaceBlurTab() {
         }
       });
 
-    // Kick off the recorder. With captureStream(FPS) it starts
-    // sampling the canvas at a regular cadence immediately, so we
-    // draw the frame corresponding to each output time BEFORE the
-    // next sample tick fires. The 250ms timeslice keeps chunks
-    // flowing to ffmpeg in parallel.
+    // Draw frame 0 BEFORE starting the recorder so the canvas already
+    // has real content when captureStream begins sampling. If the
+    // recorder starts first, it samples a blank canvas for the first
+    // few hundred ms while the seek completes, which inserts black
+    // frames at the start of the WebM and pushes the real video
+    // content later — while the audio from the source starts at t=0.
+    // That mismatch is the audio-ahead-of-video bug.
+    try {
+      await seekTo(0);
+      drawFrameAt(0);
+      setProgress(1 / totalFrames);
+      setStatusMsg(`Rendering… 0% (frame 1 / ${totalFrames})`);
+    } catch (e) {
+      console.error('[FaceBlur] first frame draw failed', e);
+    }
+
     mr.start(250);
 
     try {
-      // Draw frame 0 before the recorder's first sample tick so the
-      // first recorded frame is already blurred.
-      await seekTo(0);
-      drawFrameAt(0);
-
       // Paced render loop: produce one canvas frame per output time,
       // then sleep just long enough for the captureStream to sample
       // it. The recorder samples at 1/FPS intervals of wall-clock
@@ -850,9 +827,10 @@ export default function FaceBlurTab() {
           await new Promise((r) => setTimeout(r, lag));
         }
 
-        if (i % 10 === 0) {
+        if (i % 5 === 0 || i === totalFrames - 1) {
           setProgress(i / totalFrames);
-          setStatusMsg(`Rendering… ${Math.round((i / totalFrames) * 100)}%`);
+          setStatusMsg(`Rendering… ${Math.round((i / totalFrames) * 100)}% (frame ${i + 1} / ${totalFrames})`);
+          await new Promise((r) => setTimeout(r, 0));
         }
       }
     } catch (e) {
@@ -896,6 +874,9 @@ export default function FaceBlurTab() {
     setPhase('done');
     setStatusMsg('Export complete.');
     setProgress(1);
+    } finally {
+      exportingRef.current = false;
+    }
   }
 
   function cancelExport() {
@@ -931,29 +912,62 @@ export default function FaceBlurTab() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        <section className="fb-step">
-          <h3>1. Choose video</h3>
-          <div className="fb-row">
-            <button className="chip" disabled={busy} onClick={pickVideo}>
-              {videoName ? 'Change video…' : 'Choose video…'}
-            </button>
-            {videoName && <span className="muted">{videoName}</span>}
-            {!videoName && <span className="muted">…or drag a video file anywhere in this tab</span>}
+        <section className="fb-step fb-step--source">
+          <div className="fb-source-head">
+            <span className="fb-source-badge" aria-hidden>
+              1
+            </span>
+            <div className="fb-source-head-text">
+              <h3 className="fb-source-title">Source video</h3>
+              <p className="fb-source-lead">
+                Local file · MP4, WebM, MOV, MKV, AVI — processed on this machine only.
+              </p>
+            </div>
           </div>
-          {videoPath && (
-            <div className="fb-video-wrap">
-              <video
-                ref={videoRef}
-                controls={!busy}
-                muted={phase === 'exporting'}
-                className="fb-video"
-                crossOrigin="anonymous"
-              />
-              <canvas
-                ref={overlayCanvasRef}
-                className="fb-overlay"
-                aria-hidden
-              />
+
+          {!videoPath ? (
+            <div className={`fb-upload-drop ${dragActive ? 'fb-upload-drop--active' : ''}`}>
+              <div className="fb-upload-drop-icon" aria-hidden>
+                <svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="8" y="14" width="40" height="28" rx="4" stroke="currentColor" strokeWidth="1.75" opacity="0.9" />
+                  <path d="M8 22h40" stroke="currentColor" strokeWidth="1.25" opacity="0.35" />
+                  <path d="M18 14v-3a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v3M32 14v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
+                  <path d="M28 26v10M23 31h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </div>
+              <p className="fb-upload-drop-title">Drop your clip here</p>
+              <p className="fb-upload-drop-sub">Release to load · or pick a file with the button below</p>
+              <button type="button" className="fb-upload-primary" disabled={busy} onClick={pickVideo}>
+                Choose video…
+              </button>
+            </div>
+          ) : (
+            <div className="fb-source-loaded">
+              <div className="fb-source-file">
+                <div className="fb-source-file-icon" aria-hidden>
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <path d="M10 9l5 3.5-5 3.5V9z" fill="currentColor" stroke="none" />
+                  </svg>
+                </div>
+                <div className="fb-source-file-info">
+                  <span className="fb-source-file-name">{videoName}</span>
+                  {sourceMetaLine && <span className="fb-source-file-meta">{sourceMetaLine}</span>}
+                </div>
+                <button type="button" className="fb-source-file-change chip" disabled={busy} onClick={pickVideo}>
+                  Change…
+                </button>
+              </div>
+              <div className="fb-video-wrap">
+                <video
+                  ref={videoRef}
+                  controls={!busy}
+                  muted={phase === 'exporting'}
+                  className="fb-video"
+                  crossOrigin="anonymous"
+                />
+                <canvas ref={overlayCanvasRef} className="fb-overlay" aria-hidden />
+              </div>
             </div>
           )}
         </section>
@@ -963,19 +977,30 @@ export default function FaceBlurTab() {
             <h3>2. Detect faces</h3>
             <div className="fb-row">
               <button className="chip sel" disabled={busy} onClick={detectAllFaces}>
-                {phase === 'ready' || phase === 'done' ? 'Re-run detection' : 'Detect faces'}
+                {phase === 'exporting'
+                  ? 'Exporting…'
+                  : phase === 'ready' || phase === 'done'
+                    ? 'Re-run detection'
+                    : 'Detect faces'}
               </button>
               {phase === 'detecting' && (
                 <button className="chip" onClick={() => { abortRef.current = true; }}>
                   Cancel
                 </button>
               )}
-              {statusMsg && <span className="muted">{statusMsg}</span>}
+              {phase === 'detecting' && statusMsg && (
+                <span className="muted">{statusMsg}</span>
+              )}
             </div>
-            {busy && (
+            {phase === 'detecting' && (
               <div className="fb-progress">
                 <div className="fb-progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
               </div>
+            )}
+            {phase === 'ready' && tracks.length > 0 && (
+              <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
+                Next: scroll down to <strong>select faces</strong>, then <strong>Export blurred MP4</strong>.
+              </p>
             )}
           </section>
         )}
@@ -1016,14 +1041,14 @@ export default function FaceBlurTab() {
             <div className="fb-row">
               <input
                 type="range"
-                min={8}
-                max={80}
+                min={12}
+                max={120}
                 step={1}
                 value={blurStrength}
                 onChange={(e) => setBlurStrength(+e.target.value)}
                 disabled={busy}
               />
-              <span className="muted">{blurStrength}</span>
+              <span className="muted">{blurStrength} — lower = lighter blur, higher = stronger blur</span>
             </div>
           </section>
         )}
@@ -1041,6 +1066,9 @@ export default function FaceBlurTab() {
               </button>
               {phase === 'exporting' && (
                 <button className="chip" onClick={cancelExport}>Cancel</button>
+              )}
+              {phase === 'exporting' && statusMsg && (
+                <span className="muted">{statusMsg}</span>
               )}
               {estimatedExportSec != null && phase !== 'exporting' && phase !== 'done' && (
                 <span className="muted">

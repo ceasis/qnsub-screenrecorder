@@ -633,24 +633,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
     return { path: p, name: basename(p) };
   });
 
-  // Ask the user where to save the blurred result and hand back a
-  // fully-qualified output path (no file yet). The renderer then
-  // drives faceblur:streamStart()/Chunk/Stop to write into it.
-  ipcMain.handle('faceblur:pick-output', async (_e, suggestedName: string) => {
-    const main = getMainWindow();
-    const res = await dialog.showSaveDialog(main!, {
-      title: 'Save blurred video as…',
-      defaultPath: join(app.getPath('videos'), suggestedName),
-      filters: [{ name: 'MP4', extensions: ['mp4'] }]
-    });
-    if (res.canceled || !res.filePath) return null;
-    return res.filePath;
-  });
-
-  // Spawn an ffmpeg session that writes to a user-chosen absolute
-  // path. Mirrors recording:streamStart but without the auto-generated
-  // ScreenRecording_<stamp> folder — face-blur export picks its own
-  // target so we hand it the exact path instead.
+  // Spawn an ffmpeg session that writes to an absolute path chosen by
+  // the renderer (same folder as source, `-blurred-HHMM` before ext).
+  // Mirrors recording:streamStart but without the auto-generated
+  // ScreenRecording_<stamp> folder.
   ipcMain.handle('faceblur:streamStart', async (_e, opts: { outputPath: string; fps?: number }) => {
     if (!opts?.outputPath) return { ok: false, error: 'No output path' };
     const projectFolder = join(opts.outputPath, '..');
@@ -712,17 +698,28 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
     const bin = (ffmpegStaticImport as unknown as string || '').replace('app.asar', 'app.asar.unpacked');
     if (!bin) return false;
     const tmpPath = opts.blurredPath.replace(/\.mp4$/i, '') + '.tmp.mp4';
+    // The blurred video was produced by a seek-based render loop that
+    // starts at source time 0 but has a wall-clock startup delay
+    // before the MediaRecorder produces its first frame. The encoded
+    // video's first PTS may therefore be >0. The source audio always
+    // starts at 0, so without correction the audio races ahead.
+    //
+    // `-vsync 0` on the video input preserves its exact timestamps
+    // without dropping/duping. `-af aresample=async=1` on the audio
+    // pads initial silence if the video starts late, and `-shortest`
+    // trims the audio to match the video's duration.
     const args = [
       '-y',
       '-hide_banner',
       '-loglevel', 'error',
-      '-i', opts.blurredPath,   // video (no audio)
-      '-i', opts.sourcePath,    // audio (and video we ignore)
+      '-i', opts.blurredPath,     // input 0: video (no audio)
+      '-i', opts.sourcePath,      // input 1: original (audio source)
       '-map', '0:v:0',
-      '-map', '1:a:0?',         // optional audio stream
+      '-map', '1:a:0?',
       '-c:v', 'copy',
       '-c:a', 'aac',
       '-b:a', '192k',
+      '-af', 'aresample=async=1',
       '-shortest',
       '-movflags', '+faststart',
       tmpPath

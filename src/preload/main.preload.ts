@@ -109,8 +109,6 @@ const api = {
   // Face Blur
   pickBlurVideo: (): Promise<{ path: string; name: string } | null> =>
     ipcRenderer.invoke('faceblur:pick-video'),
-  pickBlurOutput: (suggestedName: string): Promise<string | null> =>
-    ipcRenderer.invoke('faceblur:pick-output', suggestedName),
   blurStreamStart: (opts: { outputPath: string; fps?: number }): Promise<{ ok: boolean; sessionId?: string; outputPath?: string; error?: string }> =>
     ipcRenderer.invoke('faceblur:streamStart', opts),
   blurStreamChunk: (sessionId: string, bytes: ArrayBuffer): Promise<boolean> =>

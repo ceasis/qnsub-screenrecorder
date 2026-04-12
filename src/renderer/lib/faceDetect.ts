@@ -10,6 +10,9 @@
 
 import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
+/** Must match `package.json` → `@mediapipe/tasks-vision` (WASM on CDN must match bundled JS). */
+const MP_TASKS_VISION_VERSION = '0.10.34';
+
 export type FaceDetection = {
   // Pixel-space bounding box in the SOURCE VIDEO coordinate system.
   x: number;
@@ -44,27 +47,32 @@ export async function initFaceDetector(): Promise<void> {
     try {
       await Promise.race([
         (async () => {
-          console.log('[faceDetect] fetching fileset…');
-          const fileset = await FilesetResolver.forVisionTasks(
-            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
-          );
+          // WASM build MUST match the JS bundle from the same npm release.
+          const wasmBase = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_TASKS_VISION_VERSION}/wasm`;
+          console.log('[faceDetect] fetching fileset…', wasmBase);
+          const fileset = await FilesetResolver.forVisionTasks(wasmBase);
           console.log('[faceDetect] fileset ready, creating detector…');
-          // IMPORTANT: CPU delegate. The GPU path conflicts with the
-          // segmentation backend the Recorder tab already initialised
-          // on mount — both compete for the same WebGL context and
-          // one of them wedges. Face detection on CPU easily sustains
-          // 30fps on BlazeFace short-range, which is all we need
-          // since detection runs offline during the seek pass.
-          detector = await FaceDetector.createFromOptions(fileset, {
-            baseOptions: {
-              modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite',
-              delegate: 'CPU'
-            },
-            runningMode: 'VIDEO',
-            minDetectionConfidence: 0.5
-          });
-          console.log('[faceDetect] detector ready');
+          const modelAssetPath =
+            'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite';
+          // Lower threshold = more recall (small / profile / distant faces).
+          // Users can deselect false positives in the UI before export.
+          const common = { runningMode: 'VIDEO' as const, minDetectionConfidence: 0.28 };
+          // Prefer GPU for faster offline scans; fall back to CPU if WebGL is
+          // busy (Recorder selfie segmentation) or GPU init fails.
+          try {
+            detector = await FaceDetector.createFromOptions(fileset, {
+              baseOptions: { modelAssetPath, delegate: 'GPU' },
+              ...common
+            });
+            console.log('[faceDetect] detector ready (GPU delegate)');
+          } catch (gpuErr) {
+            console.warn('[faceDetect] GPU delegate unavailable, using CPU', gpuErr);
+            detector = await FaceDetector.createFromOptions(fileset, {
+              baseOptions: { modelAssetPath, delegate: 'CPU' },
+              ...common
+            });
+            console.log('[faceDetect] detector ready (CPU delegate)');
+          }
         })(),
         timeout
       ]);

@@ -181,9 +181,16 @@ export function sampleTrackAt(
   track: FaceTrack,
   time: number
 ): { x: number; y: number; width: number; height: number } | null {
-  if (time < track.start || time > track.end) return null;
+  if (time < track.start) return null;
   const s = track.samples;
   if (s.length === 0) return null;
+  // After the last detection sample, keep the last bbox so export still
+  // obscures the face until the end of the clip (sparse sampling used to
+  // leave faces sharp after `track.end`).
+  if (time >= track.end) {
+    const last = s[s.length - 1];
+    return { x: last.x, y: last.y, width: last.width, height: last.height };
+  }
   if (s.length === 1) {
     return { x: s[0].x, y: s[0].y, width: s[0].width, height: s[0].height };
   }
