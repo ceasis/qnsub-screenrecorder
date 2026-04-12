@@ -65,6 +65,10 @@ type BlurApi = {
   blurStreamCancel: (sessionId: string) => Promise<boolean>;
   blurMuxAudio: (opts: { blurredPath: string; sourcePath: string }) => Promise<boolean>;
   readVideoFile: (path: string) => Promise<ArrayBuffer | null>;
+  imgStart: (opts: { outputPath: string; fps?: number; width: number; height: number }) => Promise<{ ok: boolean; sessionId?: string; error?: string }>;
+  imgFrame: (sessionId: string, jpegBytes: ArrayBuffer) => Promise<boolean>;
+  imgStop: (sessionId: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  imgCancel: (sessionId: string) => Promise<void>;
 };
 const api: BlurApi = (window as any).api;
 
@@ -88,6 +92,10 @@ export default function FaceBlurTab() {
   const abortRef = useRef<boolean>(false);
   /** Suppresses auto-detect if `loadedmetadata` fires mid-export (rare). */
   const exportingRef = useRef(false);
+  // Synchronous guard so rapid clicks / auto-detect-on-load can't
+  // kick off two detection passes concurrently. React state `phase`
+  // lags by one render tick, so `disabled={busy}` alone isn't enough.
+  const detectRunningRef = useRef(false);
 
   // Average wall-clock time (ms) per detection sample. Populated by
   // `detectAllFaces` and reused to estimate export duration. The
@@ -387,6 +395,8 @@ export default function FaceBlurTab() {
       );
       setPhase('error');
     };
+    if (detectRunningRef.current) return;
+    detectRunningRef.current = true;
     setPhase('detecting');
     window.addEventListener('unhandledrejection', origRejection);
     try {
@@ -396,6 +406,7 @@ export default function FaceBlurTab() {
       setErrorMsg('Detection failed: ' + ((e as Error)?.message || String(e)));
       setPhase('error');
     } finally {
+      detectRunningRef.current = false;
       window.removeEventListener('unhandledrejection', origRejection);
     }
   }
@@ -667,10 +678,13 @@ export default function FaceBlurTab() {
 
     const FPS = 30;
 
-    // Start the ffmpeg session.
+    // Image-pipe encoder: push individual JPEG frames to ffmpeg.
+    // Each frame is exactly 1/FPS seconds — no wall-clock timestamps,
+    // no MediaRecorder, no WebM. This guarantees output duration
+    // matches source duration regardless of seek latency.
     let session: string | null = null;
     try {
-      const start = await api.blurStreamStart({ outputPath: out, fps: FPS });
+      const start = await api.imgStart({ outputPath: out, fps: FPS, width: outW, height: outH });
       if (!start.ok || !start.sessionId) {
         setErrorMsg('Could not start encoder: ' + (start.error || 'unknown'));
         setPhase('error');
@@ -683,40 +697,13 @@ export default function FaceBlurTab() {
       return;
     }
 
-    // CRITICAL: capture at a fixed fps, not manual-mode. The manual
-    // `captureStream(0)` + `requestFrame()` path injects frames with
-    // Manual frame emission: captureStream(0) means the canvas never
-    // auto-emits — we call track.requestFrame() exactly once per
-    // drawn frame. This guarantees the output has exactly `totalFrames`
-    // frames regardless of how long each seek takes. ffmpeg's
-    // `-vsync cfr -r 30` then spaces them evenly at 30fps, so the
-    // final video duration matches the source.
-    //
-    // Why not captureStream(FPS): that samples at wall-clock intervals,
-    // but our seek loop is slower than real-time (~70ms per frame vs
-    // 33ms at 30fps). So the recorder samples the same canvas 2-3
-    // times per seek, inflating the output duration by 2-3x.
-    const stream = canvas.captureStream(0);
-    const captureTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
-
-    let mimeType = 'video/webm;codecs=vp9';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp8';
-    }
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm';
-    }
-
-    const mr = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
-    const pendingChunks: Promise<unknown>[] = [];
-    mr.ondataavailable = (e) => {
-      if (!e.data || e.data.size === 0 || !session) return;
-      const sid = session;
-      const p = e.data.arrayBuffer()
-        .then((buf) => api.blurStreamChunk(sid, buf))
-        .catch(() => false);
-      pendingChunks.push(p);
-    };
+    const canvasToJpeg = (): Promise<ArrayBuffer> =>
+      new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error('toBlob returned null')); return; }
+          blob.arrayBuffer().then(resolve, reject);
+        }, 'image/jpeg', 0.92);
+      });
 
     exportingRef.current = true;
     try {
@@ -788,40 +775,25 @@ export default function FaceBlurTab() {
         }
       });
 
-    // Draw frame 0 BEFORE starting the recorder so the canvas already
-    // has real content when captureStream begins sampling. If the
-    // recorder starts first, it samples a blank canvas for the first
-    // few hundred ms while the seek completes, which inserts black
-    // frames at the start of the WebM and pushes the real video
-    // content later — while the audio from the source starts at t=0.
-    // That mismatch is the audio-ahead-of-video bug.
     try {
-      await seekTo(0);
-      drawFrameAt(0);
-      try { captureTrack.requestFrame(); } catch {}
-      setProgress(1 / totalFrames);
-      setStatusMsg(`Rendering… 0% (frame 1 / ${totalFrames})`);
-    } catch (e) {
-      console.error('[FaceBlur] first frame draw failed', e);
-    }
-
-    mr.start(250);
-
-    try {
-      // Render loop: one seek + draw + requestFrame per output frame.
-      // No wall-clock pacing needed — each requestFrame() emits exactly
-      // one frame into the MediaRecorder regardless of how long the
-      // seek took. ffmpeg normalises the timestamps with -vsync cfr.
-      for (let i = 1; i < totalFrames; i++) {
+      // Render loop: seek → draw → JPEG → pipe to ffmpeg, one frame
+      // at a time. ffmpeg stamps each at exactly 1/FPS seconds.
+      for (let i = 0; i < totalFrames; i++) {
         if (abortRef.current) break;
         const srcTime = i / FPS;
         await seekTo(srcTime);
         drawFrameAt(srcTime);
-        try { captureTrack.requestFrame(); } catch {}
+        const jpeg = await canvasToJpeg();
+        const ok = await api.imgFrame(session!, jpeg);
+        if (!ok) {
+          setErrorMsg('Encoder stopped accepting frames.');
+          setPhase('error');
+          return;
+        }
 
         if (i % 5 === 0 || i === totalFrames - 1) {
-          setProgress(i / totalFrames);
-          setStatusMsg(`Rendering… ${Math.round((i / totalFrames) * 100)}% (frame ${i + 1} / ${totalFrames})`);
+          setProgress((i + 1) / totalFrames);
+          setStatusMsg(`Rendering… ${Math.round(((i + 1) / totalFrames) * 100)}% (frame ${i + 1} / ${totalFrames})`);
           await new Promise((r) => setTimeout(r, 0));
         }
       }
@@ -829,16 +801,10 @@ export default function FaceBlurTab() {
       console.error('[FaceBlur] render loop failed', e);
     }
 
-    // Flush the recorder.
-    try { mr.stop(); } catch {}
-    await new Promise<void>((resolve) => {
-      mr.addEventListener('stop', () => resolve(), { once: true });
-    });
-    await Promise.allSettled(pendingChunks);
-
+    // Close ffmpeg's stdin and wait for it to finish.
     if (session) {
       setStatusMsg('Finalising video…');
-      const fin = await api.blurStreamStop(session, true);
+      const fin = await api.imgStop(session);
       if (!fin.ok) {
         setErrorMsg('Encoder finished with error: ' + (fin.error || 'unknown'));
         setPhase('error');

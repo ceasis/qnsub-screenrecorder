@@ -120,7 +120,15 @@ const api = {
   blurMuxAudio: (opts: { blurredPath: string; sourcePath: string }): Promise<boolean> =>
     ipcRenderer.invoke('faceblur:muxAudio', opts),
   readVideoFile: (path: string): Promise<ArrayBuffer | null> =>
-    ipcRenderer.invoke('faceblur:read-video-file', path)
+    ipcRenderer.invoke('faceblur:read-video-file', path),
+  imgStart: (opts: { outputPath: string; fps?: number; width: number; height: number }): Promise<{ ok: boolean; sessionId?: string; error?: string }> =>
+    ipcRenderer.invoke('faceblur:imgStart', opts),
+  imgFrame: (sessionId: string, jpegBytes: ArrayBuffer): Promise<boolean> =>
+    ipcRenderer.invoke('faceblur:imgFrame', sessionId, jpegBytes),
+  imgStop: (sessionId: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('faceblur:imgStop', sessionId),
+  imgCancel: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke('faceblur:imgCancel', sessionId)
 };
 
 contextBridge.exposeInMainWorld('api', api);

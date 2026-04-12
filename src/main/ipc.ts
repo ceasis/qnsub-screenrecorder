@@ -12,6 +12,7 @@ import {
 import { remuxWebmToMp4 } from './ffmpeg';
 import { streamStart, streamChunk, streamStop, streamCancel } from './streamingRecorder';
 import ffmpegStaticImport from 'ffmpeg-static';
+import type { ChildProcess } from 'child_process';
 
 let annotationWin: BrowserWindow | null = null;
 let regionWins: BrowserWindow[] = [];
@@ -660,6 +661,92 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   ipcMain.handle('faceblur:streamCancel', async (_e, sessionId: string) => {
     streamCancel(sessionId);
     return true;
+  });
+
+  // Image-pipe encoder: accepts raw JPEG frames over stdin and writes
+  // H.264 MP4 at a fixed framerate. Each frame is exactly 1/fps
+  // seconds long — no wall-clock timestamps, no MediaRecorder, no
+  // WebM intermediate. This is the fix for the "8s source → 27s
+  // output" bug: captureStream(0)+requestFrame() stamped frames with
+  // wall-clock time which included seek latency.
+  const imgSessions = new Map<string, { proc: ChildProcess; failed: boolean; errorMsg: string; finished: boolean; closeWaiters: Array<(ok: boolean) => void>; outputPath: string }>();
+
+  ipcMain.handle('faceblur:imgStart', async (_e, opts: { outputPath: string; fps?: number; width: number; height: number }) => {
+    if (!opts?.outputPath) return { ok: false, error: 'No output path' };
+    const bin = (ffmpegStaticImport as unknown as string || '').replace('app.asar', 'app.asar.unpacked');
+    if (!bin) return { ok: false, error: 'No ffmpeg binary' };
+    const fps = Math.max(1, Math.min(60, Math.round(opts.fps || 30)));
+    const id = 'img-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    const args = [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'image2pipe',
+      '-framerate', String(fps),
+      '-i', 'pipe:0',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '20',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      opts.outputPath
+    ];
+    let proc: ChildProcess;
+    try {
+      const { spawn: s } = await import('child_process');
+      proc = s(bin, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    } catch (e: any) {
+      return { ok: false, error: 'spawn failed: ' + (e?.message || e) };
+    }
+    const session = { proc, failed: false, errorMsg: '', finished: false, closeWaiters: [] as Array<(ok: boolean) => void>, outputPath: opts.outputPath };
+    proc.stderr?.on('data', (d: Buffer) => { session.errorMsg += d.toString(); });
+    proc.on('error', (e: Error) => { session.failed = true; session.errorMsg += '\n' + e.message; });
+    proc.on('close', (code: number | null) => {
+      session.finished = true;
+      if (code !== 0) session.failed = true;
+      for (const r of session.closeWaiters) r(code === 0);
+      session.closeWaiters = [];
+    });
+    proc.stdin?.on('error', (e: Error) => { session.failed = true; session.errorMsg += '\n' + e.message; });
+    imgSessions.set(id, session);
+    return { ok: true, sessionId: id };
+  });
+
+  ipcMain.handle('faceblur:imgFrame', async (_e, sessionId: string, jpegBytes: ArrayBuffer) => {
+    const s = imgSessions.get(sessionId);
+    if (!s || s.failed || s.finished) return false;
+    const stdin = s.proc.stdin;
+    if (!stdin || stdin.destroyed) { s.failed = true; return false; }
+    try {
+      stdin.write(Buffer.from(jpegBytes));
+      return true;
+    } catch (e) {
+      s.failed = true;
+      s.errorMsg += '\n[write] ' + (e as Error).message;
+      return false;
+    }
+  });
+
+  ipcMain.handle('faceblur:imgStop', async (_e, sessionId: string) => {
+    const s = imgSessions.get(sessionId);
+    if (!s) return { ok: false, error: 'Unknown session' };
+    if (s.failed) {
+      imgSessions.delete(sessionId);
+      try { s.proc.kill('SIGKILL'); } catch {}
+      return { ok: false, error: s.errorMsg.slice(-500) || 'Failed' };
+    }
+    try { s.proc.stdin?.end(); } catch {}
+    if (!s.finished) {
+      await new Promise<boolean>((resolve) => s.closeWaiters.push(resolve));
+    }
+    imgSessions.delete(sessionId);
+    if (s.failed) return { ok: false, error: s.errorMsg.slice(-500) || 'ffmpeg exited non-zero' };
+    return { ok: true, path: s.outputPath };
+  });
+
+  ipcMain.handle('faceblur:imgCancel', async (_e, sessionId: string) => {
+    const s = imgSessions.get(sessionId);
+    if (!s) return;
+    try { s.proc.kill('SIGKILL'); } catch {}
+    imgSessions.delete(sessionId);
   });
 
   // Read a local video file's bytes and hand them back to the renderer
