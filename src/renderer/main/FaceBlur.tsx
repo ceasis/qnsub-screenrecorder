@@ -685,13 +685,19 @@ export default function FaceBlurTab() {
 
     // CRITICAL: capture at a fixed fps, not manual-mode. The manual
     // `captureStream(0)` + `requestFrame()` path injects frames with
-    // wall-clock timestamps based on when we called requestFrame,
-    // and since our render loop has per-frame seek latency the
-    // intervals are noisy. A fixed-rate captureStream tells Chromium
-    // to sample the canvas at regular intervals regardless of how
-    // often we draw; combined with ffmpeg's `-vsync cfr -r 30` on
-    // the far side, this produces a perfectly smooth output.
-    const stream = canvas.captureStream(FPS);
+    // Manual frame emission: captureStream(0) means the canvas never
+    // auto-emits — we call track.requestFrame() exactly once per
+    // drawn frame. This guarantees the output has exactly `totalFrames`
+    // frames regardless of how long each seek takes. ffmpeg's
+    // `-vsync cfr -r 30` then spaces them evenly at 30fps, so the
+    // final video duration matches the source.
+    //
+    // Why not captureStream(FPS): that samples at wall-clock intervals,
+    // but our seek loop is slower than real-time (~70ms per frame vs
+    // 33ms at 30fps). So the recorder samples the same canvas 2-3
+    // times per seek, inflating the output duration by 2-3x.
+    const stream = canvas.captureStream(0);
+    const captureTrack = stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack;
 
     let mimeType = 'video/webm;codecs=vp9';
     if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -792,6 +798,7 @@ export default function FaceBlurTab() {
     try {
       await seekTo(0);
       drawFrameAt(0);
+      try { captureTrack.requestFrame(); } catch {}
       setProgress(1 / totalFrames);
       setStatusMsg(`Rendering… 0% (frame 1 / ${totalFrames})`);
     } catch (e) {
@@ -801,31 +808,16 @@ export default function FaceBlurTab() {
     mr.start(250);
 
     try {
-      // Paced render loop: produce one canvas frame per output time,
-      // then sleep just long enough for the captureStream to sample
-      // it. The recorder samples at 1/FPS intervals of wall-clock
-      // time, so we target the same wall-clock rhythm. Seek latency
-      // usually dominates, which naturally slows the loop — that's
-      // fine: captureStream will just hold the last sample and the
-      // output is still frame-accurate.
-      const frameMs = 1000 / FPS;
-      const startWall = performance.now();
+      // Render loop: one seek + draw + requestFrame per output frame.
+      // No wall-clock pacing needed — each requestFrame() emits exactly
+      // one frame into the MediaRecorder regardless of how long the
+      // seek took. ffmpeg normalises the timestamps with -vsync cfr.
       for (let i = 1; i < totalFrames; i++) {
         if (abortRef.current) break;
         const srcTime = i / FPS;
         await seekTo(srcTime);
         drawFrameAt(srcTime);
-
-        // Pace ourselves to the wall clock so captureStream's
-        // regular-interval sampler sees one new canvas content per
-        // target interval. If we're already behind (seek was slow),
-        // just fall through without sleeping.
-        const targetWall = startWall + i * frameMs;
-        const now = performance.now();
-        const lag = targetWall - now;
-        if (lag > 1) {
-          await new Promise((r) => setTimeout(r, lag));
-        }
+        try { captureTrack.requestFrame(); } catch {}
 
         if (i % 5 === 0 || i === totalFrames - 1) {
           setProgress(i / totalFrames);
