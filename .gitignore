@@ -6,3 +6,11 @@ out/
 .vite/
 .idea/
 .vscode/
+
+# Secrets / credentials — never commit these.
+.env
+.env.*
+*.pem
+*.key
+secrets.*
+credentials.*
