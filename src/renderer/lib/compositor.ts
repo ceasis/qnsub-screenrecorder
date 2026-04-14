@@ -1,7 +1,7 @@
 import type { Arrow, Rect, WebcamEffect, WebcamShape, WebcamSize } from '../../shared/types';
 import { COLOR_HEX, WEBCAM_PX, combinedWebcamFilter } from '../../shared/types';
 import { drawAnnotation } from './arrowDraw';
-import { composeSegmented, computeMaskCentroid, SegMode, SegBackendId, WebcamSegmenter } from './segmenter';
+import { composeSegmented, computeMaskCentroid, createComposeScratch, SegMode, SegBackendId, WebcamSegmenter, type ComposeScratch } from './segmenter';
 import { createAutoFrameState, updateAutoFrame, type AutoFrameState } from './autoFrame';
 import { shapePath } from './shapes';
 
@@ -96,6 +96,19 @@ export class Compositor {
   private targetFps = 30;
   // In-flight guard for the segmenter so it never piles up.
   private segPending = false;
+  // Frame counter used to throttle segmenter inference to every
+  // other frame. At 30fps that's 15fps inference, which is still
+  // plenty fast for face motion and halves the GPU cost. Temporal
+  // mask smoothing already averages the previous and current mask
+  // inside composeSegmented, so the 1-frame lag between inferences
+  // is visually invisible.
+  private segFrameCounter = 0;
+  // Cached face filter string. Rebuilt only when effect / faceLight /
+  // faceBlurPx / autoCenter change (see `rebuildFaceFilter`). Without
+  // this, `combinedWebcamFilter` ran on every drawWebcam frame — 30
+  // times a second — concatenating strings and forcing Canvas 2D to
+  // re-parse `ctx.filter`.
+  private cachedFaceFilter: string = 'none';
   // Last time we actually drew a frame, in performance.now() ms. Used to
   // rate-limit the requestVideoFrameCallback driver — Windows screen capture
   // delivers frames on a 60Hz vsync clock even when nothing changed, and
@@ -109,6 +122,10 @@ export class Compositor {
   private textOverlay: TextOverlay | null = null;
   private segmenter: WebcamSegmenter;
   private webcamOut: HTMLCanvasElement = document.createElement('canvas');
+  // Per-instance scratch canvases for composeSegmented. Each consumer
+  // (main compositor, floating webcam bubble) has its own so they
+  // don't clobber each other's temporal mask smoothing.
+  private composeScratch: ComposeScratch = createComposeScratch();
   private cursorZoom: CursorZoomState = {
     enabled: false, factor: 1.3, x: 0, y: 0, displayW: 1920, displayH: 1080,
     followSpeed: 0.08, followDelayMs: 300
@@ -140,6 +157,22 @@ export class Compositor {
     this.canvas.width = cfg.outWidth;
     this.canvas.height = cfg.outHeight;
     this.ctx = this.canvas.getContext('2d', { alpha: false })!;
+    this.rebuildFaceFilter();
+  }
+
+  /**
+   * Rebuild the cached CSS filter string used for the face layer:
+   * effect + face light + optional face blur. Runs only on settings
+   * change (via `setWebcamSettings`), not per frame.
+   */
+  private rebuildFaceFilter() {
+    const { effect, faceLight, autoCenter, faceBlurPx } = this.webcamSettings;
+    const fl = autoCenter ? 0 : (faceLight || 0);
+    const base = combinedWebcamFilter(effect, fl);
+    const fb = Math.max(0, Math.min(40, faceBlurPx || 0));
+    this.cachedFaceFilter = fb > 0
+      ? (base === 'none' ? `blur(${fb}px)` : `${base} blur(${fb}px)`)
+      : base;
   }
 
   setWebcamSettings(s: Partial<WebcamSettings>) {
@@ -149,6 +182,15 @@ export class Compositor {
       // Hot-swap the segmenter in the background — old one keeps
       // serving frames until the new backend has finished init.
       this.segmenter.setBackend(s.segBackend).catch(() => {});
+    }
+    // Rebuild the face filter cache only if one of its inputs changed.
+    if (
+      s.effect !== undefined ||
+      s.faceLight !== undefined ||
+      s.autoCenter !== undefined ||
+      s.faceBlurPx !== undefined
+    ) {
+      this.rebuildFaceFilter();
     }
   }
 
@@ -402,47 +444,70 @@ export class Compositor {
     const oh = this.cfg.outHeight;
 
     ctx.save();
-    const weight = t.bold ? '700' : '400';
-    const style = t.italic ? 'italic' : 'normal';
-    const px = Math.max(8, Math.min(400, t.size | 0));
-    ctx.font = `${style} ${weight} ${px}px ${t.font || 'sans-serif'}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = t.color || '#ffffff';
-    ctx.strokeStyle = '#000000';
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
+    try {
+      const weight = t.bold ? '700' : '400';
+      const style = t.italic ? 'italic' : 'normal';
+      const px = Math.max(8, Math.min(400, (t.size | 0) || 48));
+      // Multi-word font families (e.g. "Arial Black", "Comic Sans MS")
+      // must be quoted in CSS font shorthand or ctx.font rejects the
+      // string silently and falls back to the previous (often wrong)
+      // font. Always wrap in double quotes unless the caller already
+      // passed a generic family keyword.
+      const rawFamily = (t.font || 'sans-serif').trim();
+      const isGeneric = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(rawFamily);
+      const family = isGeneric ? rawFamily : `"${rawFamily.replace(/"/g, '')}"`;
+      ctx.font = `${style} ${weight} ${px}px ${family}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = t.color || '#ffffff';
+      ctx.strokeStyle = '#000000';
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.filter = 'none';
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
 
-    const cx = Math.round(Math.max(0, Math.min(1, t.x)) * ow);
-    const cy = Math.round(Math.max(0, Math.min(1, t.y)) * oh);
+      const cx = Math.round(Math.max(0, Math.min(1, t.x)) * ow);
+      const cy = Math.round(Math.max(0, Math.min(1, t.y)) * oh);
 
-    if (t.effect === 'shadow') {
-      ctx.shadowColor = 'rgba(0,0,0,0.75)';
-      ctx.shadowBlur = Math.max(4, px * 0.12);
-      ctx.shadowOffsetX = Math.max(2, px * 0.06);
-      ctx.shadowOffsetY = Math.max(2, px * 0.06);
-      ctx.fillText(text, cx, cy);
-    } else if (t.effect === 'outline') {
-      // Thick stroke first (clipped to even pixels with lineJoin=round
-      // so corners don't spike), then fill on top.
-      ctx.lineJoin = 'round';
-      ctx.miterLimit = 2;
-      ctx.lineWidth = Math.max(2, px * 0.12);
-      ctx.strokeText(text, cx, cy);
-      ctx.fillText(text, cx, cy);
-    } else if (t.effect === 'glow') {
-      // Centred soft glow using shadow with zero offset. Multiple
-      // fills stack the glow for extra punch without being too slow.
-      ctx.shadowColor = t.color || '#ffffff';
-      ctx.shadowBlur = Math.max(8, px * 0.4);
-      ctx.fillText(text, cx, cy);
-      ctx.fillText(text, cx, cy);
-    } else {
-      ctx.fillText(text, cx, cy);
+      if (t.effect === 'shadow') {
+        ctx.shadowColor = 'rgba(0,0,0,0.75)';
+        ctx.shadowBlur = Math.max(4, px * 0.12);
+        ctx.shadowOffsetX = Math.max(2, px * 0.06);
+        ctx.shadowOffsetY = Math.max(2, px * 0.06);
+        ctx.fillText(text, cx, cy);
+      } else if (t.effect === 'outline') {
+        // Thick stroke first (lineJoin=round so corners don't spike),
+        // then fill on top.
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.lineWidth = Math.max(2, px * 0.12);
+        ctx.strokeText(text, cx, cy);
+        ctx.fillText(text, cx, cy);
+      } else if (t.effect === 'glow') {
+        // Soft halo: one pass with shadow then clear the shadow and
+        // draw the fill on top cleanly. Clearing between passes stops
+        // the second draw from shadowing its own shadow.
+        ctx.shadowColor = t.color || '#ffffff';
+        ctx.shadowBlur = Math.max(8, px * 0.4);
+        ctx.fillText(text, cx, cy);
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.fillText(text, cx, cy);
+      } else {
+        ctx.fillText(text, cx, cy);
+      }
+    } catch (e) {
+      // Canvas 2D can throw on font strings the engine refuses to
+      // parse (bad family name, malformed weight). Logging once per
+      // frame is noisy but at least the user can see why nothing
+      // rendered instead of silently getting a blank overlay.
+      console.warn('[Compositor] drawTextOverlay failed', e);
+    } finally {
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   private async drawWebcam(video: HTMLVideoElement) {
@@ -457,24 +522,22 @@ export class Compositor {
     // in-flight guard so we never queue more than one process() call.
     const wantSeg = bgMode !== 'none' || autoCenter === true;
     let src: CanvasImageSource = video;
-    // Build the face-only filter once so we can either:
-    //   - apply it INSIDE composeSegmented (segmentation / matting
-    //     path) where it only touches the face draws, not the
-    //     background; or
-    //   - apply it on the OUTER drawImage below when there's no
-    //     background compositing and `src` is still the raw video.
-    // Auto-center disables face-light to match the UI panel's
-    // disabled-slider state. Face blur stacks on top so the user can
-    // anonymise / soften themselves independently of the background.
-    const fl = autoCenter ? 0 : (faceLight || 0);
-    const baseFaceFilter = combinedWebcamFilter(effect, fl);
-    const fbPx = Math.max(0, Math.min(40, faceBlurPx || 0));
-    const faceFilterStr = fbPx > 0
-      ? (baseFaceFilter === 'none' ? `blur(${fbPx}px)` : `${baseFaceFilter} blur(${fbPx}px)`)
-      : baseFaceFilter;
+    // Face filter string is cached in `this.cachedFaceFilter` and
+    // rebuilt only when face-related settings change. Applied either
+    // INSIDE composeSegmented (so it only touches the face draws,
+    // not the background) or on the outer drawImage below when
+    // there's no background compositing.
+    const faceFilterStr = this.cachedFaceFilter;
 
     if (wantSeg) {
-      if (!this.segPending) {
+      // Run inference on every other frame. The `segPending` guard
+      // still gates against piling up (if a single inference pass
+      // takes longer than a single frame interval, we keep skipping
+      // until it's done). `getMaskCanvas()` / `getMatted()` return
+      // whatever the last finished inference produced, so the skipped
+      // frames reuse the most recent mask automatically.
+      const shouldInfer = (this.segFrameCounter++ & 1) === 0;
+      if (shouldInfer && !this.segPending) {
         this.segPending = true;
         this.segmenter.process(video)
           .catch(() => {})
@@ -497,7 +560,8 @@ export class Compositor {
           video, mask, matted, bgMode, bgImage, this.webcamOut,
           bgEffect ?? 'none', bgBlurPx ?? 0, faceFilterStr,
           zoom, useOffsetX, useOffsetY,
-          bgZoom ?? 1
+          bgZoom ?? 1,
+          this.composeScratch
         );
       }
     }

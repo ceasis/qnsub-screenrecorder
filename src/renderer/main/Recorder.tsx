@@ -95,6 +95,40 @@ const BG_MODES: { id: SegMode; label: string }[] = [
 ];
 const COLORS: AnnotationColor[] = ANNOTATION_COLORS;
 
+// Preset palette for the Fixed Text colour picker. Tuned for high
+// contrast against both dark and busy backgrounds; the first entry
+// (white) is the default.
+const FIXED_TEXT_COLOR_PRESETS: string[] = [
+  '#ffffff', // white
+  '#000000', // black
+  '#ff3b30', // red
+  '#ff9500', // orange
+  '#ffcc00', // yellow
+  '#34c759', // green
+  '#00e5ff', // cyan
+  '#0a84ff', // blue
+  '#af52de', // purple
+  '#ff2d92'  // pink
+];
+
+// Fonts offered in the Fixed Text family dropdown. Shared between the
+// dropdown render and the Randomise button so they can't drift.
+const FIXED_TEXT_FONTS: string[] = [
+  'Arial',
+  'Arial Black',
+  'Helvetica',
+  'Georgia',
+  'Times New Roman',
+  'Courier New',
+  'Impact',
+  'Comic Sans MS',
+  'Verdana',
+  'Trebuchet MS',
+  'Tahoma',
+  'Segoe UI',
+  'Consolas'
+];
+
 // HH:MM:SS for the recording timer. Hours are omitted under an hour.
 function fmtElapsed(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
@@ -211,7 +245,17 @@ export default function RecorderTab() {
   // Fixed text overlay. Baked into the recorded output as a label
   // placed at a normalized x/y in the output canvas. Empty text =
   // no overlay.
+  const fixedTextPreviewRef = useRef<HTMLCanvasElement>(null);
   const [fixedText, setFixedText] = usePersistedState<string>('rec.fixedText', '');
+  // One-click "feeling lucky" — picks a random font + preset colour.
+  // Declared here rather than in a useMemo because it needs access
+  // to the setter functions defined just below.
+  function randomizeFixedTextStyle() {
+    const font = FIXED_TEXT_FONTS[Math.floor(Math.random() * FIXED_TEXT_FONTS.length)];
+    const color = FIXED_TEXT_COLOR_PRESETS[Math.floor(Math.random() * FIXED_TEXT_COLOR_PRESETS.length)];
+    setFixedTextFont(font);
+    setFixedTextColor(color);
+  }
   const [fixedTextFont, setFixedTextFont] = usePersistedState<string>('rec.fixedTextFont', 'Arial');
   const [fixedTextSize, setFixedTextSize] = usePersistedState<number>('rec.fixedTextSize', 48);
   const [fixedTextColor, setFixedTextColor] = usePersistedState<string>('rec.fixedTextColor', '#ffffff');
@@ -241,12 +285,31 @@ export default function RecorderTab() {
   // gets pushed into the compositor + floating webcam overlay.
   const [segBackendPref, setSegBackendPref] = usePersistedState<'auto' | SegBackendId>('rec.segBackend', 'auto');
   const [resolvedBackend, setResolvedBackend] = useState<SegBackendId>('selfie');
+  // `true` while `detectBestBackend()` is probing RVM / Multiclass /
+  // Selfie in order. RVM downloads a ~15MB model on first run so
+  // this probe can take 10–30s on a cold cache — the UI shows a
+  // "detecting…" hint next to the dropdown so the user isn't left
+  // wondering whether the auto pick is stuck or working.
+  const [segBackendDetecting, setSegBackendDetecting] = useState(false);
   useEffect(() => {
     let cancelled = false;
     if (segBackendPref === 'auto') {
-      detectBestBackend().then((id) => { if (!cancelled) setResolvedBackend(id); });
+      setSegBackendDetecting(true);
+      detectBestBackend()
+        .then((id) => {
+          if (cancelled) return;
+          setResolvedBackend(id);
+          setSegBackendDetecting(false);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          console.warn('[Recorder] detectBestBackend failed, falling back to selfie', e);
+          setResolvedBackend('selfie');
+          setSegBackendDetecting(false);
+        });
     } else {
       setResolvedBackend(segBackendPref);
+      setSegBackendDetecting(false);
     }
     return () => { cancelled = true; };
   }, [segBackendPref]);
@@ -255,11 +318,47 @@ export default function RecorderTab() {
   const onPickBgImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    // Read the file, decode it, downscale to at most 1920×1080 (more
+    // than enough for a background at recording resolution), and
+    // re-encode as JPEG at 0.85 quality. This prevents a 4K PNG from
+    // parking 8+ MB of base64 permanently in localStorage, and it
+    // also makes the compositor's drawImage calls faster since the
+    // source is smaller. Transparency is lost but background images
+    // don't usually need it.
+    const MAX_SIDE = 1920;
+    const JPEG_Q = 0.85;
     const reader = new FileReader();
     reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      setBgImageData(dataUrl);
-      setBgMode('image');
+      const rawUrl = String(reader.result || '');
+      if (!rawUrl) return;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+          const w = Math.max(1, Math.round(img.naturalWidth * scale));
+          const h = Math.max(1, Math.round(img.naturalHeight * scale));
+          const c = document.createElement('canvas');
+          c.width = w;
+          c.height = h;
+          const cctx = c.getContext('2d');
+          if (!cctx) { setBgImageData(rawUrl); setBgMode('image'); return; }
+          cctx.drawImage(img, 0, 0, w, h);
+          const compact = c.toDataURL('image/jpeg', JPEG_Q);
+          // Only use the downscaled version if it's actually smaller
+          // (small PNGs sometimes inflate when re-encoded to JPEG).
+          const best = compact.length < rawUrl.length ? compact : rawUrl;
+          setBgImageData(best);
+          setBgMode('image');
+        } catch {
+          setBgImageData(rawUrl);
+          setBgMode('image');
+        }
+      };
+      img.onerror = () => {
+        setBgImageData(rawUrl);
+        setBgMode('image');
+      };
+      img.src = rawUrl;
     };
     reader.readAsDataURL(f);
     e.target.value = '';
@@ -305,14 +404,13 @@ export default function RecorderTab() {
   const [status, setStatus] = useState('Ready');
   const [saveFolder, setSaveFolder] = usePersistedState<string>('rec.saveFolder', '');
   const [openFolderAfter, setOpenFolderAfter] = usePersistedState<boolean>('rec.openFolderAfter', true);
-  const [webcamAutoRelocate, setWebcamAutoRelocate] = usePersistedState<boolean>('rec.webcamAutoRelocate', false);
   const [webcamAutoOpacity, setWebcamAutoOpacity] = usePersistedState<boolean>('rec.webcamAutoOpacity', false);
 
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
   const previewHostRef = useRef<HTMLDivElement>(null);
   const compositorRef = useRef<Compositor | null>(null);
-  const recorderRef = useRef<Recorder | null>(null);
+  const recorderRef = useRef<MR | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -805,6 +903,111 @@ export default function RecorderTab() {
     compositorRef.current?.setTextOverlay(overlay);
   }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic]);
 
+  // Fixed text preview canvas — shows a live miniature of how the
+  // overlay will look on the recorded frame. Renders with the same
+  // ctx.font / fillText / effect logic as the compositor's
+  // `drawTextOverlay`, but scaled down to a 16:9 mini screen so the
+  // user can see position + style without starting a recording.
+  useEffect(() => {
+    const cv = fixedTextPreviewRef.current;
+    if (!cv) return;
+    const CSS_W = 320;
+    const CSS_H = 180;
+    const dpr = window.devicePixelRatio || 1;
+    // Size the canvas at device pixel ratio for a crisp miniature,
+    // then scale the context so draw coordinates match CSS pixels.
+    if (cv.width !== CSS_W * dpr) {
+      cv.width = CSS_W * dpr;
+      cv.height = CSS_H * dpr;
+      cv.style.width = CSS_W + 'px';
+      cv.style.height = CSS_H + 'px';
+    }
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, CSS_W, CSS_H);
+
+    // Checkerboard background so dark text stays visible — half-dark
+    // / half-mid-grey so any colour reads clearly.
+    const cellsX = 16;
+    const cellsY = 9;
+    const cellW = CSS_W / cellsX;
+    const cellH = CSS_H / cellsY;
+    for (let j = 0; j < cellsY; j++) {
+      for (let i = 0; i < cellsX; i++) {
+        ctx.fillStyle = (i + j) % 2 === 0 ? '#1e2530' : '#262d36';
+        ctx.fillRect(i * cellW, j * cellH, cellW + 1, cellH + 1);
+      }
+    }
+    // Outer frame so the mini screen reads as a bounded area.
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, CSS_W - 1, CSS_H - 1);
+
+    if (!fixedText.trim()) {
+      ctx.fillStyle = '#6b7380';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Type text above to preview', CSS_W / 2, CSS_H / 2);
+      return;
+    }
+
+    // Mirror the compositor's drawTextOverlay logic, scaled down.
+    // The real compositor renders at outW × outH (1920 × 1080 by
+    // default). We scale the font size from "output pixels" to
+    // "preview pixels" by the canvas height ratio so the text size
+    // in the preview matches how big it'll be in the recording.
+    const outH = 1080;
+    const sizeScale = CSS_H / outH;
+    const weight = fixedTextBold ? '700' : '400';
+    const style = fixedTextItalic ? 'italic' : 'normal';
+    const px = Math.max(4, Math.round(fixedTextSize * sizeScale));
+    const raw = (fixedTextFont || 'sans-serif').trim();
+    const isGeneric = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui)$/i.test(raw);
+    const family = isGeneric ? raw : `"${raw.replace(/"/g, '')}"`;
+
+    try {
+      ctx.font = `${style} ${weight} ${px}px ${family}`;
+    } catch {
+      ctx.font = `${px}px sans-serif`;
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = fixedTextColor || '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    const cx = Math.round(fixedTextX * CSS_W);
+    const cy = Math.round(fixedTextY * CSS_H);
+
+    if (fixedTextEffect === 'shadow') {
+      ctx.shadowColor = 'rgba(0,0,0,0.75)';
+      ctx.shadowBlur = Math.max(2, px * 0.12);
+      ctx.shadowOffsetX = Math.max(1, px * 0.06);
+      ctx.shadowOffsetY = Math.max(1, px * 0.06);
+      ctx.fillText(fixedText, cx, cy);
+    } else if (fixedTextEffect === 'outline') {
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.lineWidth = Math.max(1, px * 0.12);
+      ctx.strokeText(fixedText, cx, cy);
+      ctx.fillText(fixedText, cx, cy);
+    } else if (fixedTextEffect === 'glow') {
+      ctx.shadowColor = fixedTextColor || '#ffffff';
+      ctx.shadowBlur = Math.max(2, px * 0.4);
+      ctx.fillText(fixedText, cx, cy);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.fillText(fixedText, cx, cy);
+    } else {
+      ctx.fillText(fixedText, cx, cy);
+    }
+  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic]);
+
   // Always show the floating webcam overlay window while we're on the
   // Recorder tab. The window contains:
   //   - the camera bubble (when `includeWebcam` is on)
@@ -876,10 +1079,10 @@ export default function RecorderTab() {
   useEffect(() => {
     const recordingActive = recState === 'recording' || recState === 'paused';
     (window as any).api.setWebcamAvoidance?.({
-      autoRelocate: includeWebcam && webcamAutoRelocate && recordingActive,
+      autoRelocate: false,
       autoOpacity: includeWebcam && webcamAutoOpacity && recordingActive
     });
-  }, [includeWebcam, webcamAutoRelocate, webcamAutoOpacity, recState]);
+  }, [includeWebcam, webcamAutoOpacity, recState]);
 
   // Decode the persisted bg image data URL into an HTMLImageElement that
   // the compositor can draw. Cleared when the user removes the image.
@@ -913,6 +1116,16 @@ export default function RecorderTab() {
     });
     return off;
   }, [cursorZoom, cursorZoomFactor, cursorFollowSpeed, cursorFollowDelayMs]);
+
+  // Live-swap the voice changer effect chain when the preset or
+  // custom pitch changes. `setConfig` tears down the old FX nodes and
+  // rewires new ones inside the same AudioContext, so the recorder's
+  // MediaRecorder keeps feeding from the same track without a
+  // dropout. Only runs while a recording is active (voiceChangerRef
+  // is null during idle).
+  useEffect(() => {
+    voiceChangerRef.current?.setConfig({ preset: voicePreset, pitch: voicePitch });
+  }, [voicePreset, voicePitch]);
 
   // Receive config changes made from the floating bubble's 3-dot menu.
   useEffect(() => {
@@ -1011,7 +1224,7 @@ export default function RecorderTab() {
             </div>
           </div>
           <div className="row two-col">
-            <label className="row-label">Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the center of your webcam. 1.0× is the full frame, 3.0× is a tight crop — useful for cutting out visual clutter behind you.</Help></label>
+            <label className="row-label">Face Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the centre of your webcam — the face layer only. 1.0× is the full frame, 3.0× is a tight crop. Independent from Background Zoom further down: you can tighten your face without pushing into the replacement scene.</Help></label>
             <div className="row-ctrl">
               <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(+e.target.value)} />
             </div>
@@ -1138,9 +1351,263 @@ export default function RecorderTab() {
           )}
         </section>
 
+        <section className="panel">
+          <h2>
+            <span className="step">2</span> Live Annotation
+            <Help>Color, shape and thickness used when you draw annotations on the screen during recording. Hold <b>Ctrl</b> and drag anywhere to draw — release Ctrl to click through to apps again.</Help>
+          </h2>
+          <div className="row two-col">
+            <label className="row-label">Shape <Help>Pick what each Ctrl+drag draws. Arrow points at the endpoint. Line is just a stroke. Double has heads on both ends. Curve is a gentle bend. Circle and Box outline an area. Highlight is a translucent fat stripe.</Help></label>
+            <div className="row-ctrl">
+              {ARROW_STYLES.map((s) => (
+                <button
+                  key={s.id}
+                  className={annStyle === s.id ? 'chip sel' : 'chip'}
+                  onClick={() => setAnnStyle(s.id)}
+                  title={s.label}
+                >
+                  <span className="chip-icon" aria-hidden>
+                    <ArrowStyleIcon id={s.id} />
+                  </span>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Style <Help>Plain colors or color-with-outline presets. Outlined arrows stay readable on busy or same-color backgrounds (e.g. red on a red logo).</Help></label>
+            <div className="row-ctrl">
+              {ANNOTATION_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className={`color-chip ${annPresetId === p.id ? 'sel' : ''}`}
+                  onClick={() => pickPreset(p.id)}
+                  title={p.label}
+                  style={{
+                    background: COLOR_HEX[p.color],
+                    boxShadow: p.outline
+                      ? `inset 0 0 0 3px ${COLOR_HEX[p.outline]}`
+                      : undefined,
+                    border: p.color === 'white' || p.color === 'yellow' || p.outline === 'white'
+                      ? '2px solid rgba(0,0,0,0.55)'
+                      : '2px solid rgba(255,255,255,0.55)'
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Thickness {annThickness}px <Help>How thick the drawn arrow lines are. Thicker lines are easier to see on busy backgrounds.</Help></label>
+            <div className="row-ctrl">
+              <input
+                type="range"
+                min={2}
+                max={20}
+                step={1}
+                value={annThickness}
+                onChange={(e) => setAnnThickness(+e.target.value)}
+              />
+              <span
+                className="ann-thickness-preview"
+                style={{
+                  background: COLOR_HEX[color],
+                  height: annThickness,
+                  boxShadow: annOutline
+                    ? `0 0 0 ${Math.max(2, Math.round(annThickness * 0.4))}px ${COLOR_HEX[annOutline]}`
+                    : undefined
+                }}
+              />
+            </div>
+          </div>
+          <div className="row two-col">
+            <span className="row-label" />
+            <p className="hint row-ctrl">Hold <kbd>Ctrl</kbd> and drag over the screen to draw annotations while recording. Release <kbd>Ctrl</kbd> to click through to apps again.</p>
+          </div>
+        </section>
+
+        <section className="panel">
+          <h2>
+            <span className="step">3</span> Fixed Text
+            <Help>A permanent text label baked into every recorded frame. Useful for watermarks, lower-thirds, titles, or a fixed "LIVE" tag. Leave the text box blank to disable.</Help>
+          </h2>
+          <div className="row two-col">
+            <label className="row-label">Text <Help>Type the label that should appear on every recorded frame. Empty = no overlay.</Help></label>
+            <div className="row-ctrl">
+              <input
+                type="text"
+                value={fixedText}
+                onChange={(e) => setFixedText(e.target.value)}
+                placeholder="e.g. @yourhandle or LIVE"
+                style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+              />
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Preview <Help>Mini 16:9 preview of how the text will appear on the recorded frame. Drag the horizontal slider under the preview to move the text left/right; drag the vertical slider on the right to move it up/down. Updates live as you tweak font, size, colour, effect, and position.</Help></label>
+            <div className="row-ctrl" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+              <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 2 }}>
+                <canvas
+                  ref={fixedTextPreviewRef}
+                  style={{ display: 'block', borderRadius: 6 }}
+                />
+                {/* Vertical Y slider on the right edge of the preview.
+                    `writing-mode: vertical-lr` alone puts min (0) at
+                    the top and max (1) at the bottom — same direction
+                    as the preview's 0% = top / 100% = bottom
+                    convention. No `direction: rtl` because that
+                    inverts the axis and makes the thumb travel
+                    opposite to where the text is visually. */}
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={fixedTextY}
+                  onChange={(e) => setFixedTextY(+e.target.value)}
+                  aria-label={`Y ${Math.round(fixedTextY * 100)}%`}
+                  title={`Y ${Math.round(fixedTextY * 100)}%`}
+                  style={{
+                    width: 24,
+                    height: 180,
+                    margin: 0,
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    writingMode: 'vertical-lr' as any
+                  }}
+                />
+              </div>
+              {/* Horizontal X slider beneath the preview. Width matches
+                  the preview canvas so the slider thumb maps 1:1 to
+                  the text's horizontal position. */}
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={fixedTextX}
+                onChange={(e) => setFixedTextX(+e.target.value)}
+                aria-label={`X ${Math.round(fixedTextX * 100)}%`}
+                title={`X ${Math.round(fixedTextX * 100)}%`}
+                style={{ width: 320, display: 'block' }}
+              />
+              <span className="muted" style={{ fontSize: 11 }}>
+                X {Math.round(fixedTextX * 100)}% · Y {Math.round(fixedTextY * 100)}%
+              </span>
+            </div>
+          </div>
+          {fixedText.trim() !== '' && (
+            <>
+              <div className="row two-col">
+                <label className="row-label">Font <Help>Font family used for the fixed text. Uses the Windows-installed fonts list; anything you already have installed will work.</Help></label>
+                <div className="row-ctrl">
+                  <select
+                    value={fixedTextFont}
+                    onChange={(e) => setFixedTextFont(e.target.value)}
+                    style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                  >
+                    {FIXED_TEXT_FONTS.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                    <option value="sans-serif">System sans-serif</option>
+                    <option value="serif">System serif</option>
+                    <option value="monospace">System monospace</option>
+                  </select>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Size {fixedTextSize}px <Help>Font size in output pixels. At 1080p recording, 48 is a typical lower-third label, 120+ is a big title.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={12}
+                    max={240}
+                    step={1}
+                    value={fixedTextSize}
+                    onChange={(e) => setFixedTextSize(+e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Weight <Help>Bold / italic toggles. Bold is the default because it reads better at small sizes against busy backgrounds.</Help></label>
+                <div className="row-ctrl">
+                  <label className="check inline">
+                    <input type="checkbox" checked={fixedTextBold} onChange={(e) => setFixedTextBold(e.target.checked)} />
+                    Bold
+                  </label>
+                  <label className="check inline" style={{ marginLeft: 12 }}>
+                    <input type="checkbox" checked={fixedTextItalic} onChange={(e) => setFixedTextItalic(e.target.checked)} />
+                    Italic
+                  </label>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Color <Help>Click a preset swatch, open the colour picker, or type a hex / rgba string. Picks are applied instantly to the preview above.</Help></label>
+                <div className="row-ctrl" style={{ flexWrap: 'wrap', gap: 6 }}>
+                  {FIXED_TEXT_COLOR_PRESETS.map((hex) => (
+                    <button
+                      key={`tp-${hex}`}
+                      type="button"
+                      className={fixedTextColor.toLowerCase() === hex.toLowerCase() ? 'color-chip sel' : 'color-chip'}
+                      title={hex}
+                      aria-label={`Set text color to ${hex}`}
+                      onClick={() => setFixedTextColor(hex)}
+                      style={{
+                        width: 26,
+                        height: 26,
+                        padding: 0,
+                        borderRadius: 6,
+                        background: hex,
+                        border: '2px solid rgba(255,255,255,0.35)',
+                        cursor: 'pointer'
+                      }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={fixedTextColor.startsWith('#') ? fixedTextColor : '#ffffff'}
+                    onChange={(e) => setFixedTextColor(e.target.value)}
+                    style={{ width: 40, height: 32, padding: 0, border: '1px solid #262d36', borderRadius: 6, background: 'transparent' }}
+                  />
+                  <input
+                    type="text"
+                    value={fixedTextColor}
+                    onChange={(e) => setFixedTextColor(e.target.value)}
+                    style={{ flex: '1 1 auto', minWidth: 100, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Randomise <Help>One-click "feeling lucky" — picks a random font from the list and a random colour from the preset palette. Great for quickly auditioning different looks without manually cycling through dropdowns.</Help></label>
+                <div className="row-ctrl">
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={randomizeFixedTextStyle}
+                  >
+                    🎲 Random font + colour
+                  </button>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Effect <Help>None = flat fill. Outline = black stroke wrapped around the fill (readable over anything). Shadow = classic drop shadow. Glow = soft halo in the text colour.</Help></label>
+                <div className="row-ctrl">
+                  {(['none', 'outline', 'shadow', 'glow'] as TextOverlayEffect[]).map((ef) => (
+                    <button
+                      key={`txtfx-${ef}`}
+                      className={fixedTextEffect === ef ? 'chip sel' : 'chip'}
+                      onClick={() => setFixedTextEffect(ef)}
+                    >
+                      {ef}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+
         <section className="panel wide" style={{ ['--src-thumb' as any]: `${sourceThumbSize}px` }}>
           <h2>
-            <span className="step">2</span> Source
+            <span className="step">4</span> Source
             <Help>Pick which monitor or window to capture. You can also drag a <b>region</b> to record only part of the screen.</Help>
             <button
               className="h2-action"
@@ -1316,7 +1783,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">3</span> Audio
+            <span className="step">5</span> Audio
             <Help>Capture the sounds your computer is playing (games, videos, calls) and/or your microphone. Both are mixed together into the final video.</Help>
           </h2>
           <div className="row two-col">
@@ -1379,7 +1846,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">4</span> Webcam
+            <span className="step">6</span> Webcam
             <Help>Overlay a live camera feed on top of your screen. A floating bubble appears on your desktop so you can see yourself, and it's baked into the final video at the position you pick.</Help>
           </h2>
           <div className="row two-col">
@@ -1406,7 +1873,9 @@ export default function RecorderTab() {
                 <label className="row-label">
                   Segmentation <Help>Which model to use for removing your background. Auto picks the highest-quality one your machine can run. Selfie is fastest and most compatible. Multiclass is a newer segmentation model with cleaner hair edges. RVM is real video matting — outputs semi-transparent hair strands, best quality, needs a GPU and downloads a ~15MB model file on first run.</Help>
                   {segBackendPref === 'auto' && (
-                    <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>→ {resolvedBackend}</span>
+                    <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>
+                      {segBackendDetecting ? '(detecting…)' : `→ ${resolvedBackend}`}
+                    </span>
                   )}
                 </label>
                 <div className="row-ctrl">
@@ -1457,7 +1926,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">5</span> Floating Panel
+            <span className="step">7</span> Floating Panel
             <Help>How the floating webcam / HUD window behaves on your desktop while recording. These settings only affect the floating bubble — they don't appear in the recorded video. Only active while the webcam overlay is enabled; otherwise there's nothing floating to configure.</Help>
           </h2>
           <div className="row two-col">
@@ -1468,23 +1937,7 @@ export default function RecorderTab() {
           </div>
           <div className="row two-col">
             <label className="row-label" style={!includeWebcam ? { opacity: 0.5 } : undefined}>
-              Avoid cursor <Help>When enabled, the floating face-cam jumps to the nearest safe corner (top-left/right/middle, left/right middle, bottom-left/right/middle) as soon as your mouse approaches it, and glides back when the cursor clears off. Only active while a recording is running — the bubble stays put during setup.</Help>
-            </label>
-            <div className="row-ctrl">
-              <label className="check inline">
-                <input
-                  type="checkbox"
-                  checked={webcamAutoRelocate}
-                  disabled={!includeWebcam}
-                  onChange={(e) => setWebcamAutoRelocate(e.target.checked)}
-                />
-                Auto relocate face cam
-              </label>
-            </div>
-          </div>
-          <div className="row two-col">
-            <label className="row-label" style={!includeWebcam ? { opacity: 0.5 } : undefined}>
-              Fade near cursor <Help>When enabled, the floating face-cam becomes translucent while the mouse is over or near it, and returns to full opacity when the cursor moves away. Works independently from Avoid cursor — you can enable either, both, or neither.</Help>
+              Fade near cursor <Help>When enabled, the floating face-cam becomes translucent while the mouse is over or near it, and returns to full opacity when the cursor moves away.</Help>
             </label>
             <div className="row-ctrl">
               <label className="check inline">
@@ -1502,7 +1955,7 @@ export default function RecorderTab() {
             <div className="row two-col">
               <span className="row-label" />
               <p className="hint row-ctrl" style={{ color: 'var(--muted)' }}>
-                Enable “Include me on screen” in step 4 to use these settings.
+                Enable “Include me on screen” in step 6 to use these settings.
               </p>
             </div>
           )}
@@ -1511,7 +1964,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">6</span> Recording FX
+            <span className="step">8</span> Recording FX
             <Help>Extra effects applied during recording. The cursor-zoom pans and zooms into the area around your mouse for tutorial-style videos. The idiot board shows notes only to you — they are hidden from the recording.</Help>
           </h2>
           <div className="row two-col">
@@ -1593,7 +2046,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">7</span> Save to
+            <span className="step">9</span> Save to
             <Help>Where finished recordings go. Defaults to your Desktop. Click <b>Change…</b> to pick another folder — your choice is remembered across sessions. Recordings are saved automatically as MP4; no prompt.</Help>
           </h2>
           <div className="row two-col">
@@ -1654,207 +2107,6 @@ export default function RecorderTab() {
             <span className="row-label" />
             <p className="hint row-ctrl">Recordings are saved automatically as MP4 — no prompt. Your choice is remembered across sessions.</p>
           </div>
-        </section>
-
-        <section className="panel">
-          <h2>
-            <span className="step">8</span> Annotation color
-            <Help>Color used when you draw arrows on the screen during recording. Hold <b>Ctrl</b> and drag anywhere to draw an arrow — release Ctrl to click through to apps again.</Help>
-          </h2>
-          <div className="row two-col">
-            <label className="row-label">Shape <Help>Pick what each Ctrl+drag draws. Arrow points at the endpoint. Line is just a stroke. Double has heads on both ends. Curve is a gentle bend. Circle and Box outline an area. Highlight is a translucent fat stripe.</Help></label>
-            <div className="row-ctrl">
-              {ARROW_STYLES.map((s) => (
-                <button
-                  key={s.id}
-                  className={annStyle === s.id ? 'chip sel' : 'chip'}
-                  onClick={() => setAnnStyle(s.id)}
-                  title={s.label}
-                >
-                  <span className="chip-icon" aria-hidden>
-                    <ArrowStyleIcon id={s.id} />
-                  </span>
-                  {s.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="row two-col">
-            <label className="row-label">Style <Help>Plain colors or color-with-outline presets. Outlined arrows stay readable on busy or same-color backgrounds (e.g. red on a red logo).</Help></label>
-            <div className="row-ctrl">
-              {ANNOTATION_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  className={`color-chip ${annPresetId === p.id ? 'sel' : ''}`}
-                  onClick={() => pickPreset(p.id)}
-                  title={p.label}
-                  style={{
-                    background: COLOR_HEX[p.color],
-                    boxShadow: p.outline
-                      ? `inset 0 0 0 3px ${COLOR_HEX[p.outline]}`
-                      : undefined,
-                    border: p.color === 'white' || p.color === 'yellow' || p.outline === 'white'
-                      ? '2px solid rgba(0,0,0,0.55)'
-                      : '2px solid rgba(255,255,255,0.55)'
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="row two-col">
-            <label className="row-label">Thickness {annThickness}px <Help>How thick the drawn arrow lines are. Thicker lines are easier to see on busy backgrounds.</Help></label>
-            <div className="row-ctrl">
-              <input
-                type="range"
-                min={2}
-                max={20}
-                step={1}
-                value={annThickness}
-                onChange={(e) => setAnnThickness(+e.target.value)}
-              />
-              <span
-                className="ann-thickness-preview"
-                style={{
-                  background: COLOR_HEX[color],
-                  height: annThickness,
-                  boxShadow: annOutline
-                    ? `0 0 0 ${Math.max(2, Math.round(annThickness * 0.4))}px ${COLOR_HEX[annOutline]}`
-                    : undefined
-                }}
-              />
-            </div>
-          </div>
-          <div className="row two-col">
-            <span className="row-label" />
-            <p className="hint row-ctrl">Hold <kbd>Ctrl</kbd> and drag over the screen to draw arrows while recording. Release <kbd>Ctrl</kbd> to click through to apps again.</p>
-          </div>
-
-          <div className="row two-col" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #262d36' }}>
-            <label className="row-label">Fixed text <Help>A permanent text label drawn on top of every recorded frame. Leave blank to disable. Useful for watermarks, lower-thirds, titles, or a fixed "LIVE" tag. Position with the X/Y sliders; style with font / size / colour / effect below.</Help></label>
-            <div className="row-ctrl">
-              <input
-                type="text"
-                value={fixedText}
-                onChange={(e) => setFixedText(e.target.value)}
-                placeholder="e.g. @yourhandle or LIVE"
-                style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
-              />
-            </div>
-          </div>
-          {fixedText.trim() !== '' && (
-            <>
-              <div className="row two-col">
-                <label className="row-label">Font <Help>Font family used for the fixed text. Uses the Windows-installed fonts list; anything you already have installed will work.</Help></label>
-                <div className="row-ctrl">
-                  <select
-                    value={fixedTextFont}
-                    onChange={(e) => setFixedTextFont(e.target.value)}
-                    style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
-                  >
-                    <option value="Arial">Arial</option>
-                    <option value="Arial Black">Arial Black</option>
-                    <option value="Helvetica">Helvetica</option>
-                    <option value="Georgia">Georgia</option>
-                    <option value="Times New Roman">Times New Roman</option>
-                    <option value="Courier New">Courier New</option>
-                    <option value="Impact">Impact</option>
-                    <option value="Comic Sans MS">Comic Sans MS</option>
-                    <option value="Verdana">Verdana</option>
-                    <option value="Trebuchet MS">Trebuchet MS</option>
-                    <option value="Tahoma">Tahoma</option>
-                    <option value="Segoe UI">Segoe UI</option>
-                    <option value="Consolas">Consolas</option>
-                    <option value="sans-serif">System sans-serif</option>
-                    <option value="serif">System serif</option>
-                    <option value="monospace">System monospace</option>
-                  </select>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Size {fixedTextSize}px <Help>Font size in output pixels. At 1080p recording, 48 is a typical lower-third label, 120+ is a big title.</Help></label>
-                <div className="row-ctrl">
-                  <input
-                    type="range"
-                    min={12}
-                    max={240}
-                    step={1}
-                    value={fixedTextSize}
-                    onChange={(e) => setFixedTextSize(+e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Weight <Help>Bold / italic toggles. Bold is the default because it reads better at small sizes against busy backgrounds.</Help></label>
-                <div className="row-ctrl">
-                  <label className="check inline">
-                    <input type="checkbox" checked={fixedTextBold} onChange={(e) => setFixedTextBold(e.target.checked)} />
-                    Bold
-                  </label>
-                  <label className="check inline" style={{ marginLeft: 12 }}>
-                    <input type="checkbox" checked={fixedTextItalic} onChange={(e) => setFixedTextItalic(e.target.checked)} />
-                    Italic
-                  </label>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Color <Help>Any CSS colour. Click the swatch to pick visually, or type a hex/rgba string.</Help></label>
-                <div className="row-ctrl">
-                  <input
-                    type="color"
-                    value={fixedTextColor}
-                    onChange={(e) => setFixedTextColor(e.target.value)}
-                    style={{ width: 48, height: 32, padding: 0, border: '1px solid #262d36', borderRadius: 6, background: 'transparent' }}
-                  />
-                  <input
-                    type="text"
-                    value={fixedTextColor}
-                    onChange={(e) => setFixedTextColor(e.target.value)}
-                    style={{ flex: '1 1 auto', minWidth: 120, marginLeft: 8, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
-                  />
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Effect <Help>None = flat fill. Outline = black stroke wrapped around the fill (readable over anything). Shadow = classic drop shadow. Glow = soft halo in the text colour.</Help></label>
-                <div className="row-ctrl">
-                  {(['none', 'outline', 'shadow', 'glow'] as TextOverlayEffect[]).map((ef) => (
-                    <button
-                      key={`txtfx-${ef}`}
-                      className={fixedTextEffect === ef ? 'chip sel' : 'chip'}
-                      onClick={() => setFixedTextEffect(ef)}
-                    >
-                      {ef}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">X {Math.round(fixedTextX * 100)}% <Help>Horizontal position as a percentage of the output width. 0 = left edge, 50 = centre, 100 = right edge.</Help></label>
-                <div className="row-ctrl">
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={fixedTextX}
-                    onChange={(e) => setFixedTextX(+e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Y {Math.round(fixedTextY * 100)}% <Help>Vertical position as a percentage of the output height. 0 = top edge, 50 = middle, 100 = bottom edge. Default 92% puts the label in the lower-third zone.</Help></label>
-                <div className="row-ctrl">
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={fixedTextY}
-                    onChange={(e) => setFixedTextY(+e.target.value)}
-                  />
-                </div>
-              </div>
-            </>
-          )}
         </section>
 
         <section className="panel wide">

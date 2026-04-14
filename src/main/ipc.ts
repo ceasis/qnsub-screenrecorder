@@ -22,44 +22,41 @@ let idiotWin: BrowserWindow | null = null;
 let cursorTimer: NodeJS.Timeout | null = null;
 
 // ---------- Cursor-aware webcam avoidance ----------
-// The floating webcam window can either slide out of the cursor's way
-// (autoRelocate) or fade translucent when the cursor nears it
-// (autoOpacity). Both are driven by a single shared screen-cursor poll
-// running at ~30 fps. Toggles can be enabled/disabled independently; the
-// poll is only active while at least one of them is on.
+// The floating webcam window can fade translucent when the cursor
+// nears it (autoOpacity). The old auto-relocate / corner-jump
+// behaviour was removed — it felt dizzying in practice and users
+// preferred to drag the window themselves.
+//
+// The poll runs at ~30fps while autoOpacity is on and is completely
+// silent otherwise.
 let webcamAvoidTimer: NodeJS.Timeout | null = null;
-let webcamAutoRelocate = false;
 let webcamAutoOpacity = false;
-// The original ("home") position the user dragged the window to. When the
-// cursor moves away, we slide smoothly back to this spot.
+// The original ("home") position the user dragged the window to.
+// Still tracked because other parts of the app (idiot-board dock,
+// "return home" behaviour) use it, even though the avoidance loop
+// no longer moves the window.
 let webcamHomePos: { x: number; y: number } | null = null;
-// Smoothed current bounds / opacity used by the poll loop so transitions
-// don't jump frame-to-frame.
-let webcamSmoothX = 0;
-let webcamSmoothY = 0;
 let webcamSmoothOpacity = 1;
-// When true, the next 'move' event on the webcam window was triggered by
-// our own avoidance loop and must NOT be interpreted as a user drag.
+// When true, the next 'move' event on the webcam window was
+// triggered programmatically and must NOT be treated as a user drag.
+// Retained for compatibility with any code paths that still set it.
 let webcamSuppressMoveAsUser = false;
 
 const AVOID_BUFFER = 60;       // px of padding around the window that counts as "near"
 const OPACITY_FAR = 1.0;
 const OPACITY_NEAR = 0.25;
-const SMOOTH_POS = 0.18;       // exponential smoothing factor for position
 const SMOOTH_OP  = 0.3;        // exponential smoothing factor for opacity
 
 function captureWebcamHome() {
   if (webcamWin && !webcamWin.isDestroyed()) {
     const b = webcamWin.getBounds();
     webcamHomePos = { x: b.x, y: b.y };
-    webcamSmoothX = b.x;
-    webcamSmoothY = b.y;
   }
 }
 
 function startWebcamAvoidanceIfNeeded() {
   if (webcamAvoidTimer) return;
-  if (!webcamAutoRelocate && !webcamAutoOpacity) return;
+  if (!webcamAutoOpacity) return;
   if (!webcamWin || webcamWin.isDestroyed()) return;
   if (!webcamHomePos) captureWebcamHome();
   webcamAvoidTimer = setInterval(() => {
@@ -71,80 +68,17 @@ function startWebcamAvoidanceIfNeeded() {
       const pt = screen.getCursorScreenPoint();
       const b = webcamWin.getBounds();
 
-      // "Near" is evaluated against the STABLE home rect, not the window's
-      // current (possibly already-slid-away) position. If we used the
-      // current bounds, the relocation created a feedback loop: window
-      // slides away → cursor no longer near current bounds → target flips
-      // back to home → window slides back → cursor near again → repeat.
-      // Anchoring the hit-test to the home rect gives stable hysteresis
-      // so the window stays displaced until the cursor actually leaves
-      // the original area.
-      const hx = webcamHomePos ? webcamHomePos.x : b.x;
-      const hy = webcamHomePos ? webcamHomePos.y : b.y;
-      const nearX = pt.x >= hx - AVOID_BUFFER && pt.x <= hx + b.width + AVOID_BUFFER;
-      const nearY = pt.y >= hy - AVOID_BUFFER && pt.y <= hy + b.height + AVOID_BUFFER;
+      // Hit-test against the window's current bounds. Since we no
+      // longer move the window on hover, there's no feedback loop to
+      // worry about — the bounds are stable unless the user drags.
+      const nearX = pt.x >= b.x - AVOID_BUFFER && pt.x <= b.x + b.width + AVOID_BUFFER;
+      const nearY = pt.y >= b.y - AVOID_BUFFER && pt.y <= b.y + b.height + AVOID_BUFFER;
       const isNear = nearX && nearY;
-      const targetOp = webcamAutoOpacity ? (isNear ? OPACITY_NEAR : OPACITY_FAR) : 1;
+
+      const targetOp = isNear ? OPACITY_NEAR : OPACITY_FAR;
       webcamSmoothOpacity += (targetOp - webcamSmoothOpacity) * SMOOTH_OP;
       if (Math.abs(webcamSmoothOpacity - webcamWin.getOpacity()) > 0.01) {
         webcamWin.setOpacity(Math.max(0.1, Math.min(1, webcamSmoothOpacity)));
-      }
-
-      // Desired position: when the cursor invades the window, jump to the
-      // anchor point farthest from the cursor. Anchors are the 8 "safe
-      // spots" around the display perimeter:
-      //   top-left   top-center   top-right
-      //   mid-left                mid-right
-      //   bot-left   bot-center   bot-right
-      // (no center anchor — we never want the bubble floating in the
-      // middle of the screen.) Once the cursor clears the home zone we
-      // glide back to the user's original dropped position.
-      if (webcamAutoRelocate && webcamHomePos) {
-        let targetX = webcamHomePos.x;
-        let targetY = webcamHomePos.y;
-        if (isNear) {
-          const d = screen.getDisplayNearestPoint(pt);
-          const margin = 16;
-          const leftX = d.bounds.x + margin;
-          const rightX = d.bounds.x + d.bounds.width - b.width - margin;
-          const midX = d.bounds.x + Math.round((d.bounds.width - b.width) / 2);
-          const topY = d.bounds.y + margin;
-          const botY = d.bounds.y + d.bounds.height - b.height - margin;
-          const midY = d.bounds.y + Math.round((d.bounds.height - b.height) / 2);
-          const anchors: { x: number; y: number }[] = [
-            { x: leftX,  y: topY },   // top-left
-            { x: midX,   y: topY },   // top-center
-            { x: rightX, y: topY },   // top-right
-            { x: leftX,  y: midY },   // mid-left
-            { x: rightX, y: midY },   // mid-right
-            { x: leftX,  y: botY },   // bot-left
-            { x: midX,   y: botY },   // bot-center
-            { x: rightX, y: botY }    // bot-right
-          ];
-          // Pick the anchor whose CENTER is farthest from the cursor —
-          // that's the safest landing spot so the bubble doesn't end up
-          // still under the user's hand after moving.
-          let best = anchors[0];
-          let bestDist = -1;
-          for (const a of anchors) {
-            const cx = a.x + b.width / 2;
-            const cy = a.y + b.height / 2;
-            const dx = cx - pt.x;
-            const dy = cy - pt.y;
-            const dist = dx * dx + dy * dy;
-            if (dist > bestDist) { bestDist = dist; best = a; }
-          }
-          targetX = best.x;
-          targetY = best.y;
-        }
-        webcamSmoothX += (targetX - webcamSmoothX) * SMOOTH_POS;
-        webcamSmoothY += (targetY - webcamSmoothY) * SMOOTH_POS;
-        const nx = Math.round(webcamSmoothX);
-        const ny = Math.round(webcamSmoothY);
-        if (nx !== b.x || ny !== b.y) {
-          webcamSuppressMoveAsUser = true;
-          webcamWin.setBounds({ x: nx, y: ny, width: b.width, height: b.height });
-        }
       }
     } catch {}
   }, 33);
@@ -155,15 +89,11 @@ function stopWebcamAvoidance() {
     clearInterval(webcamAvoidTimer);
     webcamAvoidTimer = null;
   }
-  // Return the window to full opacity and its home position so the user
-  // isn't left staring at a faded or displaced bubble.
+  // Return the window to full opacity so the user isn't left staring
+  // at a faded bubble after the recording stops.
   if (webcamWin && !webcamWin.isDestroyed()) {
     webcamWin.setOpacity(1);
     webcamSmoothOpacity = 1;
-    if (webcamHomePos && webcamAutoRelocate === false) {
-      const b = webcamWin.getBounds();
-      webcamWin.setBounds({ x: webcamHomePos.x, y: webcamHomePos.y, width: b.width, height: b.height });
-    }
   }
 }
 
@@ -301,8 +231,6 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
       }
       const b = webcamWin.getBounds();
       webcamHomePos = { x: b.x, y: b.y };
-      webcamSmoothX = b.x;
-      webcamSmoothY = b.y;
     };
     webcamWin.on('move', onWebcamMove);
     webcamWin.on('moved', onWebcamMove);
@@ -342,9 +270,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   // Cursor-aware webcam avoidance toggles. Called by the main renderer
   // when the user flips either checkbox; either can be on independently.
   ipcMain.handle('webcam:setAvoidance', async (_e, opts: { autoRelocate?: boolean; autoOpacity?: boolean }) => {
-    if (opts.autoRelocate !== undefined) webcamAutoRelocate = !!opts.autoRelocate;
+    // `autoRelocate` is accepted for backwards compat with older
+    // renderer builds but is ignored — the feature was removed.
     if (opts.autoOpacity !== undefined) webcamAutoOpacity = !!opts.autoOpacity;
-    if (webcamAutoRelocate || webcamAutoOpacity) {
+    if (webcamAutoOpacity) {
       startWebcamAvoidanceIfNeeded();
     } else {
       stopWebcamAvoidance();

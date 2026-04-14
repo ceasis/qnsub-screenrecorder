@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { WebcamEffect, WebcamShape, WebcamSize } from '../../shared/types';
 import { EFFECTS, SHAPES, WEBCAM_PX, combinedWebcamFilter } from '../../shared/types';
-import { WebcamSegmenter, composeSegmented, computeMaskCentroid, SegMode, SegBackendId } from '../lib/segmenter';
+import { WebcamSegmenter, composeSegmented, computeMaskCentroid, createComposeScratch, SegMode, SegBackendId, type ComposeScratch } from '../lib/segmenter';
 import { createAutoFrameState, updateAutoFrame } from '../lib/autoFrame';
 import { shapePath } from '../lib/shapes';
 
@@ -92,6 +92,10 @@ export default function WebcamOverlay() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const segOutRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  // Per-instance scratch canvases for composeSegmented. Owned by this
+  // window so its temporal mask smoothing doesn't fight the main
+  // compositor's.
+  const composeScratchRef = useRef<ComposeScratch>(createComposeScratch());
   const segRef = useRef<WebcamSegmenter | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);
@@ -315,7 +319,8 @@ export default function WebcamOverlay() {
               v, mask, matted, cur.bgMode, bgImgRef.current, segOutRef.current,
               cur.bgEffect ?? 'none', cur.bgBlurPx ?? 0, faceFilterStr,
               cur.zoom, useOffX, useOffY,
-              cur.bgZoom ?? 1
+              cur.bgZoom ?? 1,
+              composeScratchRef.current
             );
           }
           // Auto-center: feed the mask centroid through the shared

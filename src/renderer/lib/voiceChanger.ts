@@ -27,6 +27,14 @@ export type VoiceChangerConfig = {
 
 export type VoiceChangerHandle = {
   stream: MediaStream;
+  /**
+   * Swap the effect chain (and pitch) in place without rebuilding the
+   * AudioContext or replacing the output MediaStream. Called from the
+   * Recorder when the user changes the voice preset mid-recording —
+   * the recorder's MediaRecorder keeps its same track and audio
+   * continues to flow across the swap.
+   */
+  setConfig: (cfg: VoiceChangerConfig) => void;
   close: () => void;
 };
 
@@ -229,78 +237,124 @@ export function createVoiceChanger(
   micStream: MediaStream,
   cfg: VoiceChangerConfig
 ): VoiceChangerHandle {
-  if (cfg.preset === 'off') {
-    // Pure pass-through: return the original stream unchanged so we add
-    // zero latency and zero CPU cost for users who don't want effects.
-    return { stream: micStream, close: () => {} };
-  }
-
+  // Always build the full graph — even for 'off' preset — so the
+  // output MediaStream (and therefore its track identity) is stable
+  // across preset changes. If the user starts recording on 'off' and
+  // later switches to 'deep', the recorder keeps the same track.
+  //
+  // Graph skeleton (invariant across swaps):
+  //
+  //     source ──► junglePre ──► [jungle] ──► fxBus ──► [fxChain] ──► dest
+  //
+  // `junglePre` and `fxBus` are always-on GainNodes that act as the
+  // stable hand-off points between the invariant parts of the graph
+  // and the swappable effect sections. When the user changes preset,
+  // we tear down the `fxChain` nodes (and the ring oscillator if
+  // any) and wire a new set in place — the source, Jungle, fxBus,
+  // and dest all stay connected.
   const ctx = new AudioContext();
   const source = ctx.createMediaStreamSource(micStream);
   const dest = ctx.createMediaStreamDestination();
+  const junglePre = ctx.createGain();
+  const fxBus = ctx.createGain();
 
   const jungle = new Jungle(ctx);
-  jungle.setPitchOffset(presetPitch(cfg.preset, cfg.pitch));
 
-  // Tail = the last node in the chain before the destination. Each
-  // preset appends its own FX nodes and advances `tail` accordingly.
-  let tail: AudioNode = jungle.output;
+  // The current swappable effect nodes. Disconnected and replaced on
+  // setConfig(). `ringOsc` stops + restarts with the robot preset.
+  let fxNodes: AudioNode[] = [];
   let ringOsc: OscillatorNode | null = null;
 
-  if (cfg.preset === 'radio') {
-    const hp = ctx.createBiquadFilter();
-    hp.type = 'highpass';
-    hp.frequency.value = 300;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 3400;
-    const peak = ctx.createBiquadFilter();
-    peak.type = 'peaking';
-    peak.frequency.value = 1800;
-    peak.Q.value = 1.2;
-    peak.gain.value = 6;
-    tail.connect(hp);
-    hp.connect(lp);
-    lp.connect(peak);
-    tail = peak;
-  } else if (cfg.preset === 'robot') {
-    // Ring modulation via a GainNode whose `gain` AudioParam is driven
-    // by a sine oscillator. gain oscillates around 0 with amplitude 1,
-    // so `output = input * sin(2πft)` — classic amplitude/ring mod.
-    const ring = ctx.createGain();
-    ring.gain.value = 0;
-    const osc = ctx.createOscillator();
-    osc.frequency.value = 50;
-    osc.connect(ring.gain);
-    osc.start();
-    ringOsc = osc;
-    tail.connect(ring);
-    tail = ring;
-  } else if (cfg.preset === 'deep') {
-    const ls = ctx.createBiquadFilter();
-    ls.type = 'lowshelf';
-    ls.frequency.value = 220;
-    ls.gain.value = 6;
-    tail.connect(ls);
-    tail = ls;
-  } else if (cfg.preset === 'high') {
-    const hs = ctx.createBiquadFilter();
-    hs.type = 'highshelf';
-    hs.frequency.value = 2000;
-    hs.gain.value = 4;
-    tail.connect(hs);
-    tail = hs;
+  source.connect(junglePre);
+  junglePre.connect(jungle.input);
+  jungle.output.connect(fxBus);
+  // fxBus → (fxChain or nothing) → dest. The initial wiring is just
+  // fxBus directly to dest; applyConfig will rewire as needed.
+  fxBus.connect(dest);
+
+  function tearDownFx() {
+    try { fxBus.disconnect(); } catch {}
+    // Also disconnect any FX node we previously built so they don't
+    // linger and hold references.
+    for (const n of fxNodes) {
+      try { n.disconnect(); } catch {}
+    }
+    fxNodes = [];
+    if (ringOsc) {
+      try { ringOsc.stop(); } catch {}
+      try { ringOsc.disconnect(); } catch {}
+      ringOsc = null;
+    }
   }
 
-  source.connect(jungle.input);
-  tail.connect(dest);
+  function applyConfig(nextCfg: VoiceChangerConfig) {
+    tearDownFx();
+    jungle.setPitchOffset(presetPitch(nextCfg.preset, nextCfg.pitch));
+
+    // Build the new FX chain and connect fxBus → chain → dest. For
+    // the pass-through presets ('off', 'custom'), there's no chain —
+    // fxBus connects directly to dest.
+    if (nextCfg.preset === 'radio') {
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 300;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3400;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking';
+      peak.frequency.value = 1800;
+      peak.Q.value = 1.2;
+      peak.gain.value = 6;
+      fxBus.connect(hp);
+      hp.connect(lp);
+      lp.connect(peak);
+      peak.connect(dest);
+      fxNodes = [hp, lp, peak];
+    } else if (nextCfg.preset === 'robot') {
+      const ring = ctx.createGain();
+      ring.gain.value = 0;
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 50;
+      osc.connect(ring.gain);
+      osc.start();
+      ringOsc = osc;
+      fxBus.connect(ring);
+      ring.connect(dest);
+      fxNodes = [ring];
+    } else if (nextCfg.preset === 'deep') {
+      const ls = ctx.createBiquadFilter();
+      ls.type = 'lowshelf';
+      ls.frequency.value = 220;
+      ls.gain.value = 6;
+      fxBus.connect(ls);
+      ls.connect(dest);
+      fxNodes = [ls];
+    } else if (nextCfg.preset === 'high') {
+      const hs = ctx.createBiquadFilter();
+      hs.type = 'highshelf';
+      hs.frequency.value = 2000;
+      hs.gain.value = 4;
+      fxBus.connect(hs);
+      hs.connect(dest);
+      fxNodes = [hs];
+    } else {
+      // 'off' / 'custom' / default: pass-through from fxBus to dest.
+      fxBus.connect(dest);
+    }
+  }
+
+  applyConfig(cfg);
 
   return {
     stream: dest.stream,
+    setConfig: applyConfig,
     close: () => {
       try { jungle.stop(); } catch {}
-      try { ringOsc?.stop(); } catch {}
+      tearDownFx();
       try { source.disconnect(); } catch {}
+      try { junglePre.disconnect(); } catch {}
+      try { fxBus.disconnect(); } catch {}
       ctx.close().catch(() => {});
     }
   };

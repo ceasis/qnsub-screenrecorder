@@ -1,16 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ScreenSource } from '../../shared/types';
+import type { RegionResult, ScreenSource } from '../../shared/types';
 
-declare global {
-  interface Window {
-    regionApi: {
-      displayId: string;
-      submit: (r: { sourceId: string; bounds: { x: number; y: number; width: number; height: number } }) => void;
-      cancel: () => void;
-    };
-    api: { listSources: () => Promise<ScreenSource[]> };
-  }
-}
+// `window.api` is already declared globally by the main Recorder
+// module with the full MainApi shape. Declaring it again here with a
+// narrower type collides (TS2717), so we cast locally instead. The
+// region preload actually only exposes `listSources`, but the cast is
+// safe because this component never touches the other methods.
+type RegionPreload = {
+  displayId: string;
+  submit: (r: Omit<RegionResult, 'displayId'>) => void;
+  cancel: () => void;
+};
+const regionApi = (window as unknown as { regionApi: RegionPreload }).regionApi;
+const listSources = (window as unknown as { api: { listSources: () => Promise<ScreenSource[]> } }).api.listSources;
 
 export default function Region() {
   const [start, setStart] = useState<{ x: number; y: number } | null>(null);
@@ -21,16 +23,16 @@ export default function Region() {
     // Pick the screen source that matches our displayId.
     (async () => {
       try {
-        const sources = await window.api.listSources();
+        const sources = await listSources();
         const match = sources.find(
-          (s) => s.id.startsWith('screen:') && (!window.regionApi.displayId || s.displayId === window.regionApi.displayId)
+          (s) => s.id.startsWith('screen:') && (!regionApi.displayId || s.displayId === regionApi.displayId)
         );
         setSourceId(match?.id || sources.find((s) => s.id.startsWith('screen:'))?.id || '');
       } catch {}
     })();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') window.regionApi.cancel();
+      if (e.key === 'Escape') regionApi.cancel();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -54,7 +56,7 @@ export default function Region() {
       setStart(null); setEnd(null);
       return;
     }
-    window.regionApi.submit({
+    regionApi.submit({
       sourceId,
       bounds: { x, y, width, height },
       displaySize: { width: window.innerWidth, height: window.innerHeight }

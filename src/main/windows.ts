@@ -95,6 +95,10 @@ export function createMainWindow(): BrowserWindow {
     title: 'QNSub Screen Recorder',
     backgroundColor: '#0e1116',
     autoHideMenuBar: true,
+    // Start maximised. The `width`/`height` above are still needed
+    // as the "restore" size — if the user unmaximises the window by
+    // dragging the title bar, it falls back to 1100×760.
+    show: false,
     webPreferences: {
       preload: preload('main'),
       contextIsolation: true,
@@ -102,6 +106,13 @@ export function createMainWindow(): BrowserWindow {
       sandbox: false,
       backgroundThrottling: false
     }
+  });
+
+  // Maximise before the first paint so the user never sees the
+  // 1100×760 "restore size" flash, then show the window.
+  win.once('ready-to-show', () => {
+    win.maximize();
+    win.show();
   });
 
   win.loadURL(rendererUrl('main'));

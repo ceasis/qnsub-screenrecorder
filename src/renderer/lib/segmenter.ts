@@ -518,9 +518,44 @@ export function computeMaskCentroid(
 // Compositing
 // ============================================================
 
-// Reusable scratch canvases for the mask refinement pipeline.
-let maskCanvas: HTMLCanvasElement | null = null;
-let erodeCanvas: HTMLCanvasElement | null = null;
+/**
+ * Per-consumer scratch canvases used by `composeSegmented`. Holding
+ * these on the caller (compositor / floating bubble) instead of in
+ * module-level globals fixes two issues at once:
+ *
+ *   1. Correctness — if two consumers (the main compositor and the
+ *      floating Webcam overlay) call composeSegmented with different
+ *      output sizes, they used to stomp each other's temporal mask
+ *      smoothing canvas every frame, causing edge flicker in the
+ *      floating bubble.
+ *   2. Performance — the canvas resize thrash (every frame: "wait,
+ *      the other caller changed my size, resize back") was triggering
+ *      GPU texture reallocation 60 times a second. Per-instance
+ *      scratches mean each caller picks a size once and keeps it.
+ */
+export type ComposeScratch = {
+  maskCanvas: HTMLCanvasElement;
+  erodeCanvas: HTMLCanvasElement;
+};
+
+export function createComposeScratch(): ComposeScratch {
+  return {
+    maskCanvas: document.createElement('canvas'),
+    erodeCanvas: document.createElement('canvas')
+  };
+}
+
+// Lazy fallback singletons — used only by legacy callers that don't
+// pass a scratch argument. Kept for backwards compat during the
+// migration; both the main compositor and the webcam overlay now
+// pass per-instance scratches, so these should stay empty at runtime.
+let legacyMaskCanvas: HTMLCanvasElement | null = null;
+let legacyErodeCanvas: HTMLCanvasElement | null = null;
+function legacyScratch(): ComposeScratch {
+  if (!legacyMaskCanvas) legacyMaskCanvas = document.createElement('canvas');
+  if (!legacyErodeCanvas) legacyErodeCanvas = document.createElement('canvas');
+  return { maskCanvas: legacyMaskCanvas, erodeCanvas: legacyErodeCanvas };
+}
 
 /**
  * Compose a webcam frame with optional blur or background image
@@ -586,8 +621,13 @@ export function composeSegmented(
   // Independent background zoom — crops into the replacement image
   // (or the blurred-room source) from the centre, so the user can
   // "push in" to the fake scene without touching the face framing.
-  bgZoom: number = 1
+  bgZoom: number = 1,
+  // Per-caller scratch canvases. Optional for backwards compat; if
+  // omitted we fall back to the module-level singletons but that
+  // produces flicker when multiple consumers share the same module.
+  scratch?: ComposeScratch
 ): HTMLCanvasElement {
+  const sc = scratch || legacyScratch();
   const w = video.videoWidth || 640;
   const h = video.videoHeight || 480;
   if (out.width !== w) out.width = w;
@@ -663,9 +703,12 @@ export function composeSegmented(
   // draw the new one on top at full alpha. `destination-out` fades
   // alpha without darkening colors, which would otherwise confuse
   // the source-in matte step below.
-  if (!maskCanvas) maskCanvas = document.createElement('canvas');
-  if (maskCanvas.width !== w) { maskCanvas.width = w; maskCanvas.height = h; }
-  const mctx = maskCanvas.getContext('2d')!;
+  const smoothMask = sc.maskCanvas;
+  if (smoothMask.width !== w || smoothMask.height !== h) {
+    smoothMask.width = w;
+    smoothMask.height = h;
+  }
+  const mctx = smoothMask.getContext('2d')!;
   mctx.save();
   mctx.globalCompositeOperation = 'destination-out';
   mctx.globalAlpha = 0.55;
@@ -680,28 +723,31 @@ export function composeSegmented(
   // boundary to real image edges (hair, jaw, collar) using the live
   // video as a guide. Falls back to a canvas2D erosion pass on
   // machines without working WebGL.
-  let maskSource: HTMLCanvasElement = maskCanvas;
-  const refined = refineMaskGL(video, maskCanvas, 0.55);
+  let maskSource: HTMLCanvasElement = smoothMask;
+  const refined = refineMaskGL(video, smoothMask, 0.55);
   if (refined) {
     maskSource = refined;
   } else {
-    if (!erodeCanvas) erodeCanvas = document.createElement('canvas');
-    if (erodeCanvas.width !== w) { erodeCanvas.width = w; erodeCanvas.height = h; }
-    const ectx = erodeCanvas.getContext('2d')!;
+    const erode = sc.erodeCanvas;
+    if (erode.width !== w || erode.height !== h) {
+      erode.width = w;
+      erode.height = h;
+    }
+    const ectx = erode.getContext('2d')!;
     ectx.save();
     ectx.clearRect(0, 0, w, h);
     ectx.globalCompositeOperation = 'source-over';
-    ectx.drawImage(maskCanvas, 0, 0, w, h);
+    ectx.drawImage(smoothMask, 0, 0, w, h);
     ectx.globalCompositeOperation = 'destination-in';
     const e = 2;
     for (const [dx, dy] of [
       [ e, 0], [-e, 0], [0,  e], [0, -e],
       [ e,  e], [ e, -e], [-e,  e], [-e, -e]
     ] as [number, number][]) {
-      ectx.drawImage(maskCanvas, dx, dy, w, h);
+      ectx.drawImage(smoothMask, dx, dy, w, h);
     }
     ectx.restore();
-    maskSource = erodeCanvas;
+    maskSource = erode;
   }
 
   // Draw the (optionally eroded / refined) mask, applying the face
