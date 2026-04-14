@@ -10,7 +10,7 @@ import type {
   WebcamSize
 } from '../../shared/types';
 import { ANNOTATION_COLORS, ANNOTATION_PRESETS, ARROW_STYLES, COLOR_HEX, EFFECTS, SHAPES as ALL_SHAPES } from '../../shared/types';
-import { Compositor, WebcamSettings } from '../lib/compositor';
+import { Compositor, WebcamSettings, type TextOverlay, type TextOverlayEffect } from '../lib/compositor';
 import { getMicStream, getWebcamStream, listCameras, listMics } from '../lib/webcam';
 import { getScreenStream } from '../lib/screen';
 import { Recorder as MR, mixAudioStreams } from '../lib/mediaRecorder';
@@ -80,6 +80,10 @@ type WebcamOverlayCfg = {
   enabled?: boolean;
   autoCenter?: boolean;
   segBackend?: SegBackendId;
+  bgEffect?: WebcamEffect;
+  bgBlurPx?: number;
+  bgZoom?: number;
+  faceBlurPx?: number;
 };
 
 const SHAPES: WebcamShape[] = ALL_SHAPES;
@@ -189,7 +193,48 @@ export default function RecorderTab() {
   const [offsetY, setOffsetY] = usePersistedState<number>('rec.offsetY', 0);
   const [faceLight, setFaceLight] = usePersistedState<number>('rec.faceLight', 0);
   const [bgImageData, setBgImageData] = usePersistedState<string | undefined>('rec.bgImageData', undefined);
+  // Colour filter applied ONLY to the background image. Separate from
+  // `effect` so the user can stylise their replacement scene without
+  // also tinting their face.
+  const [bgEffect, setBgEffect] = usePersistedState<WebcamEffect>('rec.bgEffect', 'none');
+  // Extra Gaussian blur on the background layer — works with both
+  // real-room blur mode (stacks on top of the built-in 14px) and
+  // image-replacement mode (softens the fake background).
+  const [bgBlurPx, setBgBlurPx] = usePersistedState<number>('rec.bgBlurPx', 0);
+  // Background zoom — independent from the face Zoom. Scales the
+  // replacement image (or the blurred real-room source) without
+  // touching the face framing.
+  const [bgZoom, setBgZoom] = usePersistedState<number>('rec.bgZoom', 1);
+  // Face-only Gaussian blur. Anonymises / softens the face without
+  // touching the background. Stacks on top of the face colour effect.
+  const [faceBlurPx, setFaceBlurPx] = usePersistedState<number>('rec.faceBlurPx', 0);
+  // Fixed text overlay. Baked into the recorded output as a label
+  // placed at a normalized x/y in the output canvas. Empty text =
+  // no overlay.
+  const [fixedText, setFixedText] = usePersistedState<string>('rec.fixedText', '');
+  const [fixedTextFont, setFixedTextFont] = usePersistedState<string>('rec.fixedTextFont', 'Arial');
+  const [fixedTextSize, setFixedTextSize] = usePersistedState<number>('rec.fixedTextSize', 48);
+  const [fixedTextColor, setFixedTextColor] = usePersistedState<string>('rec.fixedTextColor', '#ffffff');
+  const [fixedTextEffect, setFixedTextEffect] = usePersistedState<TextOverlayEffect>('rec.fixedTextEffect', 'shadow');
+  const [fixedTextX, setFixedTextX] = usePersistedState<number>('rec.fixedTextX', 0.5);
+  const [fixedTextY, setFixedTextY] = usePersistedState<number>('rec.fixedTextY', 0.92);
+  const [fixedTextBold, setFixedTextBold] = usePersistedState<boolean>('rec.fixedTextBold', true);
+  const [fixedTextItalic, setFixedTextItalic] = usePersistedState<boolean>('rec.fixedTextItalic', false);
   const [autoCenter, setAutoCenter] = usePersistedState<boolean>('rec.autoCenter', false);
+  // Sample backgrounds loaded from `sample-background/` on mount.
+  // Each entry has a name and a self-contained data URL so clicking a
+  // thumbnail can set `bgImageData` directly without a second round-trip.
+  const [bgSamples, setBgSamples] = useState<{ name: string; dataUrl: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await (window as any).api.listBgSamples?.();
+        if (Array.isArray(list)) setBgSamples(list);
+      } catch (e) {
+        console.warn('[Recorder] failed to load bg samples', e);
+      }
+    })();
+  }, []);
   // Segmentation / matting backend preference. 'auto' resolves on
   // mount to whichever backend successfully initialised (RVM > Tasks
   // Multiclass > legacy Selfie). The resolved id is what actually
@@ -234,7 +279,13 @@ export default function RecorderTab() {
     setAnnOutline(p.outline ?? null);
   }
   const [cursorZoom, setCursorZoom] = usePersistedState<boolean>('rec.cursorZoom', false);
-  const [cursorZoomFactor, setCursorZoomFactor] = usePersistedState<number>('rec.cursorZoomFactor', 1.6);
+  const [cursorZoomFactor, setCursorZoomFactor] = usePersistedState<number>('rec.cursorZoomFactor', 1.3);
+  // How aggressively the crop chases the cursor. Low = slow drift,
+  // high = snappy follow. Stored raw as the EMA blend factor.
+  const [cursorFollowSpeed, setCursorFollowSpeed] = usePersistedState<number>('rec.cursorFollowSpeed', 0.08);
+  // Hold time before a new cursor target is accepted. Higher = more
+  // forgiving of flicks / jittery mouse moves.
+  const [cursorFollowDelayMs, setCursorFollowDelayMs] = usePersistedState<number>('rec.cursorFollowDelayMs', 300);
   // Output framerate for the encoded MP4. ffmpeg forces CFR at this rate,
   // duplicating or dropping source frames as needed to hit the grid.
   const [outputFps, setOutputFps] = usePersistedState<number>('rec.outputFps', 30);
@@ -505,7 +556,11 @@ export default function RecorderTab() {
         x: webcamPos.x, y: webcamPos.y,
         bgImage: bgImageRef.current,
         autoCenter,
-        segBackend: resolvedBackend
+        segBackend: resolvedBackend,
+        bgEffect,
+        bgBlurPx,
+        bgZoom,
+        faceBlurPx
       };
       const comp = new Compositor(
         {
@@ -527,6 +582,21 @@ export default function RecorderTab() {
         webcamSettings
       );
       compositorRef.current = comp;
+      // Seed the fixed text overlay if the user typed one before
+      // starting the recording.
+      if (fixedText.trim()) {
+        comp.setTextOverlay({
+          text: fixedText,
+          font: fixedTextFont,
+          size: fixedTextSize,
+          color: fixedTextColor,
+          effect: fixedTextEffect,
+          x: fixedTextX,
+          y: fixedTextY,
+          bold: fixedTextBold,
+          italic: fixedTextItalic
+        });
+      }
 
       // attach canvas to preview host for visual feedback
       if (previewHostRef.current) {
@@ -569,7 +639,9 @@ export default function RecorderTab() {
           factor: cursorZoomFactor,
           x: 0, y: 0,
           displayW: 1920,
-          displayH: 1080
+          displayH: 1080,
+          followSpeed: cursorFollowSpeed,
+          followDelayMs: cursorFollowDelayMs
         });
       }
 
@@ -706,9 +778,32 @@ export default function RecorderTab() {
       shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight,
       x: webcamPos.x, y: webcamPos.y,
       autoCenter,
-      segBackend: resolvedBackend
+      segBackend: resolvedBackend,
+      bgEffect,
+      bgBlurPx,
+      bgZoom,
+      faceBlurPx
     });
-  }, [shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, webcamPos, autoCenter, resolvedBackend]);
+  }, [shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, webcamPos, autoCenter, resolvedBackend, bgEffect, bgBlurPx, bgZoom, faceBlurPx]);
+
+  // Push the fixed text overlay whenever any of its inputs change.
+  // Cleared (null) when the text field is empty.
+  useEffect(() => {
+    const overlay: TextOverlay | null = fixedText.trim()
+      ? {
+          text: fixedText,
+          font: fixedTextFont,
+          size: fixedTextSize,
+          color: fixedTextColor,
+          effect: fixedTextEffect,
+          x: fixedTextX,
+          y: fixedTextY,
+          bold: fixedTextBold,
+          italic: fixedTextItalic
+        }
+      : null;
+    compositorRef.current?.setTextOverlay(overlay);
+  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic]);
 
   // Always show the floating webcam overlay window while we're on the
   // Recorder tab. The window contains:
@@ -747,7 +842,7 @@ export default function RecorderTab() {
           if (cancelled) return;
           lastProbedDeviceRef.current = 'disabled';
           await window.api.openWebcamOverlay({
-            deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend,
+            deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend, bgEffect, bgBlurPx, bgZoom, faceBlurPx,
             enabled: false,
             autoCenter
           });
@@ -764,13 +859,13 @@ export default function RecorderTab() {
       // config changes (slider drags) are now cheap and don't disturb the
       // already-running camera stream.
       await window.api.openWebcamOverlay({
-        deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend,
+        deviceId: cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, segBackend: resolvedBackend, bgEffect, bgBlurPx, bgZoom, faceBlurPx,
         enabled: includeWebcam,
         autoCenter
       });
     })();
     return () => { cancelled = true; };
-  }, [includeWebcam, cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, autoCenter, resolvedBackend]);
+  }, [includeWebcam, cameraId, shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight, bgImageData, autoCenter, resolvedBackend, bgEffect, bgBlurPx, bgZoom, faceBlurPx]);
 
   // Push the cursor-avoidance toggles into the main process whenever
   // they change. Main process runs its own ~30fps cursor poll and
@@ -811,11 +906,13 @@ export default function RecorderTab() {
         x: p.x - p.displayX,
         y: p.y - p.displayY,
         displayW: p.displayW,
-        displayH: p.displayH
+        displayH: p.displayH,
+        followSpeed: cursorFollowSpeed,
+        followDelayMs: cursorFollowDelayMs
       });
     });
     return off;
-  }, [cursorZoom, cursorZoomFactor]);
+  }, [cursorZoom, cursorZoomFactor, cursorFollowSpeed, cursorFollowDelayMs]);
 
   // Receive config changes made from the floating bubble's 3-dot menu.
   useEffect(() => {
@@ -886,9 +983,164 @@ export default function RecorderTab() {
       </div>
 
       <main>
+        <section className="panel">
+          <h2>
+            <span className="step">1</span> Web Cam Basic Settings
+            <Help>Core webcam framing plus the background scene. Shape, size, and zoom control how your face is framed in the floating bubble and in the recording. Mode + samples + effect control what goes behind you. Everything here applies to both the live preview and the final video.</Help>
+          </h2>
+          <div className="row two-col">
+            <label className="row-label">Shape <Help>Frame for the webcam feed: circle, rectangle, squircle (rounded square), hexagon, diamond, heart, or star.</Help></label>
+            <div className="row-ctrl">
+              {SHAPES.map((sh) => (
+                <button key={sh} className={shape === sh ? 'chip sel' : 'chip'} onClick={() => setShape(sh)}>
+                  <span className="chip-icon">{SHAPE_ICONS[sh]}</span>
+                  {SHAPE_LABELS[sh]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Size <Help>Small (240px), Medium (360px) or Large (480px). Sets both the floating bubble size and how big the overlay appears in the recorded video.</Help></label>
+            <div className="row-ctrl">
+              {SIZES.map((sz) => (
+                <button key={sz} className={size === sz ? 'chip sel' : 'chip'} onClick={() => setSize(sz)}>
+                  <span className="chip-icon">{SIZE_ICONS[sz]}</span>
+                  {sz}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the center of your webcam. 1.0× is the full frame, 3.0× is a tight crop — useful for cutting out visual clutter behind you.</Help></label>
+            <div className="row-ctrl">
+              <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(+e.target.value)} />
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Face Effect <Help>Colour filter applied only to your face (the webcam feed). Does not affect the background. Pair with Background Effect below to mix-and-match looks — e.g. a grayscale face over a vivid image background.</Help></label>
+            <div className="row-ctrl">
+              {EFFECTS.map((ef) => (
+                <button key={`face-${ef}`} className={effect === ef ? 'chip sel' : 'chip'} onClick={() => setEffect(ef)}>
+                  <span className="chip-icon">{EFFECT_ICONS[ef]}</span>
+                  {ef}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Face Blur {faceBlurPx}px <Help>Gaussian blur applied only to your face — not the background. Useful for anonymising yourself, softening skin, or adding a dreamy look. Stacks on top of any Face Effect colour filter. 0 = sharp.</Help></label>
+            <div className="row-ctrl">
+              <input
+                type="range"
+                min={0}
+                max={40}
+                step={1}
+                value={faceBlurPx}
+                onChange={(e) => setFaceBlurPx(+e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Mode <Help>Off = raw camera feed (no segmentation). Blur = keep you sharp, blur your real room. Image = replace the background with a picked image. Requires the floating webcam overlay to be on.</Help></label>
+            <div className="row-ctrl">
+              {BG_MODES.map((b) => (
+                <button key={b.id} className={bgMode === b.id ? 'chip sel' : 'chip'} onClick={() => setBgMode(b.id)}>
+                  <span className="chip-icon">{BG_ICONS[b.id]}</span>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {bgMode !== 'none' && (
+            <div className="row two-col">
+              <label className="row-label">Background Blur {bgBlurPx}px <Help>Extra Gaussian blur applied to the background layer. Works with both Blur mode (stacks on top of the built-in real-room blur) and Image mode (softens the replacement image). 0 = no extra blur.</Help></label>
+              <div className="row-ctrl">
+                <input
+                  type="range"
+                  min={0}
+                  max={40}
+                  step={1}
+                  value={bgBlurPx}
+                  onChange={(e) => setBgBlurPx(+e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          {bgMode !== 'none' && (
+            <div className="row two-col">
+              <label className="row-label">Background Zoom {bgZoom.toFixed(1)}× <Help>Independent zoom for the background layer. Crops into the replacement image (or the blurred real-room source) from the centre, without touching how tight your face is framed. 1.0× shows the full background; 3.0× is a tight push-in.</Help></label>
+              <div className="row-ctrl">
+                <input type="range" min={1} max={3} step={0.1} value={bgZoom} onChange={(e) => setBgZoom(+e.target.value)} />
+              </div>
+            </div>
+          )}
+          {bgMode === 'image' && (
+            <>
+              <div className="row two-col">
+                <label className="row-label">Samples <Help>Built-in background images bundled with the app. Click one to use it as your background. Tap again or pick another to switch.</Help></label>
+                <div className="row-ctrl bg-samples">
+                  {bgSamples.length === 0 && <span className="muted">No samples found in <code>sample-background/</code>.</span>}
+                  {bgSamples.map((s) => {
+                    const active = bgImageData === s.dataUrl;
+                    return (
+                      <button
+                        key={s.name}
+                        type="button"
+                        className={`bg-sample ${active ? 'sel' : ''}`}
+                        onClick={() => setBgImageData(s.dataUrl)}
+                        title={s.name}
+                      >
+                        <img src={s.dataUrl} alt={s.name} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Upload <Help>Pick your own image file. Reads the file from disk; it lives only in this browser session unless you keep it.</Help></label>
+                <div className="row-ctrl">
+                  <button className="chip" onClick={() => bgFileInputRef.current?.click()}>
+                    {bgImageData ? 'Change image…' : 'Upload image…'}
+                  </button>
+                  {bgImageData && (
+                    <button
+                      className="chip"
+                      onClick={() => {
+                        bgImageRef.current = null;
+                        setBgImageData(undefined);
+                        compositorRef.current?.setWebcamSettings({ bgImage: null } as any);
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <input
+                    ref={bgFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={onPickBgImage}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Background Effect <Help>Colour filter applied to the background image only — not to your face. Combine any filter with any sample or uploaded image to restyle the scene behind you.</Help></label>
+                <div className="row-ctrl">
+                  {EFFECTS.map((ef) => (
+                    <button key={`bg-${ef}`} className={bgEffect === ef ? 'chip sel' : 'chip'} onClick={() => setBgEffect(ef)}>
+                      <span className="chip-icon">{EFFECT_ICONS[ef]}</span>
+                      {ef}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+
         <section className="panel wide" style={{ ['--src-thumb' as any]: `${sourceThumbSize}px` }}>
           <h2>
-            <span className="step">1</span> Source
+            <span className="step">2</span> Source
             <Help>Pick which monitor or window to capture. You can also drag a <b>region</b> to record only part of the screen.</Help>
             <button
               className="h2-action"
@@ -1064,7 +1316,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">2</span> Audio
+            <span className="step">3</span> Audio
             <Help>Capture the sounds your computer is playing (games, videos, calls) and/or your microphone. Both are mixed together into the final video.</Help>
           </h2>
           <div className="row two-col">
@@ -1127,7 +1379,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">3</span> Webcam
+            <span className="step">4</span> Webcam
             <Help>Overlay a live camera feed on top of your screen. A floating bubble appears on your desktop so you can see yourself, and it's baked into the final video at the position you pick.</Help>
           </h2>
           <div className="row two-col">
@@ -1142,89 +1394,12 @@ export default function RecorderTab() {
           {includeWebcam && (
             <>
               <div className="row two-col">
-                <label className="row-label">Avoid cursor <Help>When enabled, the floating face-cam slides sideways to get out of the mouse's way and glides back when the cursor clears off. Useful when you're pointing at things behind where the bubble normally sits.</Help></label>
-                <div className="row-ctrl">
-                  <label className="check inline">
-                    <input type="checkbox" checked={webcamAutoRelocate} onChange={(e) => setWebcamAutoRelocate(e.target.checked)} />
-                    Auto relocate face cam
-                  </label>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Fade near cursor <Help>When enabled, the floating face-cam becomes translucent while the mouse is over or near it, and returns to full opacity when the cursor moves away.</Help></label>
-                <div className="row-ctrl">
-                  <label className="check inline">
-                    <input type="checkbox" checked={webcamAutoOpacity} onChange={(e) => setWebcamAutoOpacity(e.target.checked)} />
-                    Auto reduce opacity of face cam
-                  </label>
-                </div>
-              </div>
-              <div className="row two-col">
                 <label className="row-label">Camera <Help>Pick which connected camera to use. Defaults to your system's default camera.</Help></label>
                 <div className="row-ctrl">
                   <select value={cameraId ?? ''} onChange={(e) => setCameraId(e.target.value || undefined)}>
                     <option value="">Default camera</option>
                     {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label || c.deviceId}</option>)}
                   </select>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Shape <Help>Frame for the webcam feed: circle, rectangle, squircle (rounded square), hexagon, diamond, heart, or star.</Help></label>
-                <div className="row-ctrl">
-                  {SHAPES.map((sh) => (
-                    <button key={sh} className={shape === sh ? 'chip sel' : 'chip'} onClick={() => setShape(sh)}>
-                      <span className="chip-icon">{SHAPE_ICONS[sh]}</span>
-                      {SHAPE_LABELS[sh]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Size <Help>Small (240px), Medium (360px) or Large (480px). Sets both the floating bubble size and how big the overlay appears in the recorded video.</Help></label>
-                <div className="row-ctrl">
-                  {SIZES.map((sz) => (
-                    <button key={sz} className={size === sz ? 'chip sel' : 'chip'} onClick={() => setSize(sz)}>
-                      <span className="chip-icon">{SIZE_ICONS[sz]}</span>
-                      {sz}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Background <Help>Off = raw camera feed. Blur = keeps you sharp and blurs the scene behind you. Image = replaces the background with a preset scene. Uses MediaPipe Selfie Segmentation.</Help></label>
-                <div className="row-ctrl">
-                  {BG_MODES.map((b) => (
-                    <button key={b.id} className={bgMode === b.id ? 'chip sel' : 'chip'} onClick={() => setBgMode(b.id)}>
-                      <span className="chip-icon">{BG_ICONS[b.id]}</span>
-                      {b.label}
-                    </button>
-                  ))}
-                  {bgMode === 'image' && (
-                    <>
-                      <button className="chip" onClick={() => bgFileInputRef.current?.click()}>
-                        {bgImageData ? 'Change image…' : 'Upload image…'}
-                      </button>
-                      {bgImageData && (
-                        <button
-                          className="chip"
-                          onClick={() => {
-                            bgImageRef.current = null;
-                            setBgImageData(undefined);
-                            compositorRef.current?.setWebcamSettings({ bgImage: null } as any);
-                          }}
-                        >
-                          Clear
-                        </button>
-                      )}
-                      <input
-                        ref={bgFileInputRef}
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={onPickBgImage}
-                      />
-                    </>
-                  )}
                 </div>
               </div>
               <div className="row two-col">
@@ -1245,17 +1420,6 @@ export default function RecorderTab() {
                     <option value="multiclass">Multiclass Segmenter (better edges)</option>
                     <option value="rvm">RVM Video Matting (best quality, GPU)</option>
                   </select>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label">Effect <Help>Live color filter applied to the webcam feed — grayscale, sepia, vintage, cool/warm tones, vivid or dramatic. Changes show up in both the bubble and the recording.</Help></label>
-                <div className="row-ctrl">
-                  {EFFECTS.map((ef) => (
-                    <button key={ef} className={effect === ef ? 'chip sel' : 'chip'} onClick={() => setEffect(ef)}>
-                      <span className="chip-icon">{EFFECT_ICONS[ef]}</span>
-                      {ef}
-                    </button>
-                  ))}
                 </div>
               </div>
               <div className="row two-col">
@@ -1287,19 +1451,67 @@ export default function RecorderTab() {
                   />
                 </div>
               </div>
-              <div className="row two-col">
-                <label className="row-label">Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the center of your webcam. 1.0× is the full frame, 3.0× is a tight crop — useful for cutting out visual clutter behind you.</Help></label>
-                <div className="row-ctrl">
-                  <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(+e.target.value)} />
-                </div>
-              </div>
             </>
           )}
         </section>
 
         <section className="panel">
           <h2>
-            <span className="step">4</span> Recording FX
+            <span className="step">5</span> Floating Panel
+            <Help>How the floating webcam / HUD window behaves on your desktop while recording. These settings only affect the floating bubble — they don't appear in the recorded video. Only active while the webcam overlay is enabled; otherwise there's nothing floating to configure.</Help>
+          </h2>
+          <div className="row two-col">
+            <span className="row-label" />
+            <p className="hint row-ctrl">
+              The floating bubble shows a live preview of yourself and the recording controls. Drag it anywhere; it stays on top of every other window while recording.
+            </p>
+          </div>
+          <div className="row two-col">
+            <label className="row-label" style={!includeWebcam ? { opacity: 0.5 } : undefined}>
+              Avoid cursor <Help>When enabled, the floating face-cam jumps to the nearest safe corner (top-left/right/middle, left/right middle, bottom-left/right/middle) as soon as your mouse approaches it, and glides back when the cursor clears off. Only active while a recording is running — the bubble stays put during setup.</Help>
+            </label>
+            <div className="row-ctrl">
+              <label className="check inline">
+                <input
+                  type="checkbox"
+                  checked={webcamAutoRelocate}
+                  disabled={!includeWebcam}
+                  onChange={(e) => setWebcamAutoRelocate(e.target.checked)}
+                />
+                Auto relocate face cam
+              </label>
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label" style={!includeWebcam ? { opacity: 0.5 } : undefined}>
+              Fade near cursor <Help>When enabled, the floating face-cam becomes translucent while the mouse is over or near it, and returns to full opacity when the cursor moves away. Works independently from Avoid cursor — you can enable either, both, or neither.</Help>
+            </label>
+            <div className="row-ctrl">
+              <label className="check inline">
+                <input
+                  type="checkbox"
+                  checked={webcamAutoOpacity}
+                  disabled={!includeWebcam}
+                  onChange={(e) => setWebcamAutoOpacity(e.target.checked)}
+                />
+                Auto reduce opacity of face cam
+              </label>
+            </div>
+          </div>
+          {!includeWebcam && (
+            <div className="row two-col">
+              <span className="row-label" />
+              <p className="hint row-ctrl" style={{ color: 'var(--muted)' }}>
+                Enable “Include me on screen” in step 4 to use these settings.
+              </p>
+            </div>
+          )}
+        </section>
+
+
+        <section className="panel">
+          <h2>
+            <span className="step">6</span> Recording FX
             <Help>Extra effects applied during recording. The cursor-zoom pans and zooms into the area around your mouse for tutorial-style videos. The idiot board shows notes only to you — they are hidden from the recording.</Help>
           </h2>
           <div className="row two-col">
@@ -1317,12 +1529,46 @@ export default function RecorderTab() {
           </div>
 
           {cursorZoom && (
-            <div className="row two-col">
-              <label className="row-label">Zoom factor {cursorZoomFactor.toFixed(1)}× <Help>How tight the zoom gets around the cursor. 1.1× is a gentle push-in; 3× is a tight close-up.</Help></label>
-              <div className="row-ctrl">
-                <input type="range" min={1.1} max={3} step={0.1} value={cursorZoomFactor} onChange={(e) => setCursorZoomFactor(+e.target.value)} />
+            <>
+              <div className="row two-col">
+                <label className="row-label">Zoom factor {cursorZoomFactor.toFixed(1)}× <Help>How tight the zoom gets around the cursor. 1.1× is a gentle push-in; 3× is a tight close-up.</Help></label>
+                <div className="row-ctrl">
+                  <input type="range" min={1.1} max={3} step={0.1} value={cursorZoomFactor} onChange={(e) => setCursorZoomFactor(+e.target.value)} />
+                </div>
               </div>
-            </div>
+              <div className="row two-col">
+                <label className="row-label">
+                  Follow speed {cursorFollowSpeed.toFixed(2)}
+                  <Help>How fast the recorded frame chases the cursor once it commits to a new target. Low values (0.02–0.05) drift slowly like a cinematic camera, higher values (0.15–0.25) snap quickly to the mouse. Too high + fast mouse movement feels dizzying on playback.</Help>
+                </label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={0.02}
+                    max={0.25}
+                    step={0.01}
+                    value={cursorFollowSpeed}
+                    onChange={(e) => setCursorFollowSpeed(+e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">
+                  Follow delay {cursorFollowDelayMs}ms
+                  <Help>How long the cursor has to stay still before the frame starts chasing it. Higher values ignore quick flicks and only follow deliberate moves — the main fix for motion sickness. 0 = chase immediately, 600+ = very forgiving.</Help>
+                </label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1200}
+                    step={20}
+                    value={cursorFollowDelayMs}
+                    onChange={(e) => setCursorFollowDelayMs(+e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
           )}
 
           <div className="row two-col">
@@ -1347,7 +1593,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">5</span> Save to
+            <span className="step">7</span> Save to
             <Help>Where finished recordings go. Defaults to your Desktop. Click <b>Change…</b> to pick another folder — your choice is remembered across sessions. Recordings are saved automatically as MP4; no prompt.</Help>
           </h2>
           <div className="row two-col">
@@ -1412,7 +1658,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">6</span> Annotation color
+            <span className="step">8</span> Annotation color
             <Help>Color used when you draw arrows on the screen during recording. Hold <b>Ctrl</b> and drag anywhere to draw an arrow — release Ctrl to click through to apps again.</Help>
           </h2>
           <div className="row two-col">
@@ -1482,6 +1728,133 @@ export default function RecorderTab() {
             <span className="row-label" />
             <p className="hint row-ctrl">Hold <kbd>Ctrl</kbd> and drag over the screen to draw arrows while recording. Release <kbd>Ctrl</kbd> to click through to apps again.</p>
           </div>
+
+          <div className="row two-col" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #262d36' }}>
+            <label className="row-label">Fixed text <Help>A permanent text label drawn on top of every recorded frame. Leave blank to disable. Useful for watermarks, lower-thirds, titles, or a fixed "LIVE" tag. Position with the X/Y sliders; style with font / size / colour / effect below.</Help></label>
+            <div className="row-ctrl">
+              <input
+                type="text"
+                value={fixedText}
+                onChange={(e) => setFixedText(e.target.value)}
+                placeholder="e.g. @yourhandle or LIVE"
+                style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+              />
+            </div>
+          </div>
+          {fixedText.trim() !== '' && (
+            <>
+              <div className="row two-col">
+                <label className="row-label">Font <Help>Font family used for the fixed text. Uses the Windows-installed fonts list; anything you already have installed will work.</Help></label>
+                <div className="row-ctrl">
+                  <select
+                    value={fixedTextFont}
+                    onChange={(e) => setFixedTextFont(e.target.value)}
+                    style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                  >
+                    <option value="Arial">Arial</option>
+                    <option value="Arial Black">Arial Black</option>
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="Georgia">Georgia</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Courier New">Courier New</option>
+                    <option value="Impact">Impact</option>
+                    <option value="Comic Sans MS">Comic Sans MS</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Trebuchet MS">Trebuchet MS</option>
+                    <option value="Tahoma">Tahoma</option>
+                    <option value="Segoe UI">Segoe UI</option>
+                    <option value="Consolas">Consolas</option>
+                    <option value="sans-serif">System sans-serif</option>
+                    <option value="serif">System serif</option>
+                    <option value="monospace">System monospace</option>
+                  </select>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Size {fixedTextSize}px <Help>Font size in output pixels. At 1080p recording, 48 is a typical lower-third label, 120+ is a big title.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={12}
+                    max={240}
+                    step={1}
+                    value={fixedTextSize}
+                    onChange={(e) => setFixedTextSize(+e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Weight <Help>Bold / italic toggles. Bold is the default because it reads better at small sizes against busy backgrounds.</Help></label>
+                <div className="row-ctrl">
+                  <label className="check inline">
+                    <input type="checkbox" checked={fixedTextBold} onChange={(e) => setFixedTextBold(e.target.checked)} />
+                    Bold
+                  </label>
+                  <label className="check inline" style={{ marginLeft: 12 }}>
+                    <input type="checkbox" checked={fixedTextItalic} onChange={(e) => setFixedTextItalic(e.target.checked)} />
+                    Italic
+                  </label>
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Color <Help>Any CSS colour. Click the swatch to pick visually, or type a hex/rgba string.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="color"
+                    value={fixedTextColor}
+                    onChange={(e) => setFixedTextColor(e.target.value)}
+                    style={{ width: 48, height: 32, padding: 0, border: '1px solid #262d36', borderRadius: 6, background: 'transparent' }}
+                  />
+                  <input
+                    type="text"
+                    value={fixedTextColor}
+                    onChange={(e) => setFixedTextColor(e.target.value)}
+                    style={{ flex: '1 1 auto', minWidth: 120, marginLeft: 8, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Effect <Help>None = flat fill. Outline = black stroke wrapped around the fill (readable over anything). Shadow = classic drop shadow. Glow = soft halo in the text colour.</Help></label>
+                <div className="row-ctrl">
+                  {(['none', 'outline', 'shadow', 'glow'] as TextOverlayEffect[]).map((ef) => (
+                    <button
+                      key={`txtfx-${ef}`}
+                      className={fixedTextEffect === ef ? 'chip sel' : 'chip'}
+                      onClick={() => setFixedTextEffect(ef)}
+                    >
+                      {ef}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">X {Math.round(fixedTextX * 100)}% <Help>Horizontal position as a percentage of the output width. 0 = left edge, 50 = centre, 100 = right edge.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={fixedTextX}
+                    onChange={(e) => setFixedTextX(+e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
+                <label className="row-label">Y {Math.round(fixedTextY * 100)}% <Help>Vertical position as a percentage of the output height. 0 = top edge, 50 = middle, 100 = bottom edge. Default 92% puts the label in the lower-third zone.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={fixedTextY}
+                    onChange={(e) => setFixedTextY(+e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          )}
         </section>
 
         <section className="panel wide">

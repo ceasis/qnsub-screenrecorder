@@ -50,6 +50,10 @@ type Config = {
   enabled?: boolean;    // when false, hide the camera bubble (toolbar + HUD only)
   autoCenter?: boolean; // when true, override offsetX/Y with mask centroid
   segBackend?: SegBackendId;
+  bgEffect?: WebcamEffect;
+  bgBlurPx?: number;
+  bgZoom?: number;
+  faceBlurPx?: number;
 };
 
 const DEFAULT_CFG: Config = {
@@ -284,6 +288,18 @@ export default function WebcamOverlay() {
         const ctx = c.getContext('2d')!;
         ctx.clearRect(0, 0, px, px);
 
+        // Build the face-only filter up front. If a background mode
+        // is active we pass it INTO composeSegmented so it's applied
+        // only on the face draws; otherwise we apply it on the outer
+        // drawImage below. Face blur stacks on top of the colour
+        // filter for an optional anonymise/soften look.
+        const fl = cur.autoCenter ? 0 : (cur.faceLight || 0);
+        const baseFaceFilter = combinedWebcamFilter(cur.effect, fl);
+        const fbPx = Math.max(0, Math.min(40, cur.faceBlurPx || 0));
+        const faceFilterStr = fbPx > 0
+          ? (baseFaceFilter === 'none' ? `blur(${fbPx}px)` : `${baseFaceFilter} blur(${fbPx}px)`)
+          : baseFaceFilter;
+
         // Run the segmenter when we need it for compositing OR when
         // auto-center is on (since the centroid comes from the mask).
         const wantSeg = cur.bgMode !== 'none' || cur.autoCenter === true;
@@ -293,12 +309,17 @@ export default function WebcamOverlay() {
           const mask = segRef.current.getMaskCanvas();
           const matted = segRef.current.getMatted();
           if (cur.bgMode !== 'none') {
-            src = composeSegmented(v, mask, matted, cur.bgMode, bgImgRef.current, segOutRef.current);
+            const useOffX = cur.autoCenter ? autoFrameRef.current.x : (cur.offsetX || 0);
+            const useOffY = cur.autoCenter ? autoFrameRef.current.y : (cur.offsetY || 0);
+            src = composeSegmented(
+              v, mask, matted, cur.bgMode, bgImgRef.current, segOutRef.current,
+              cur.bgEffect ?? 'none', cur.bgBlurPx ?? 0, faceFilterStr,
+              cur.zoom, useOffX, useOffY,
+              cur.bgZoom ?? 1
+            );
           }
           // Auto-center: feed the mask centroid through the shared
-          // auto-frame filter. It holds the previous framing when the
-          // face is partially off-screen (low mask area) so the pan
-          // doesn't slide away with the clipped centroid.
+          // auto-frame filter.
           if (cur.autoCenter) {
             const ctr = computeMaskCentroid(mask);
             updateAutoFrame(autoFrameRef.current, ctr);
@@ -307,23 +328,29 @@ export default function WebcamOverlay() {
 
         const sw = (src as HTMLVideoElement).videoWidth || (src as HTMLCanvasElement).width;
         const sh = (src as HTMLVideoElement).videoHeight || (src as HTMLCanvasElement).height;
-        const side = Math.min(sw, sh) / Math.max(1, cur.zoom);
+        // Face zoom / pan are applied inside composeSegmented when a
+        // background mode is active; the outer draw just cover-fits at
+        // 1×. When there's no background compositing, the outer draw
+        // still handles face zoom + pan against the raw video.
+        const outerZoom = cur.bgMode === 'none' ? cur.zoom : 1;
+        const side = Math.min(sw, sh) / Math.max(1, outerZoom);
         const maxPanX = (sw - side) / 2;
         const maxPanY = (sh - side) / 2;
-        // Use the auto-tracked offset when on, otherwise the manual sliders.
-        const useOffsetX = cur.autoCenter ? autoFrameRef.current.x : (cur.offsetX || 0);
-        const useOffsetY = cur.autoCenter ? autoFrameRef.current.y : (cur.offsetY || 0);
+        const rawOffX = cur.autoCenter ? autoFrameRef.current.x : (cur.offsetX || 0);
+        const rawOffY = cur.autoCenter ? autoFrameRef.current.y : (cur.offsetY || 0);
+        const useOffsetX = cur.bgMode === 'none' ? rawOffX : 0;
+        const useOffsetY = cur.bgMode === 'none' ? rawOffY : 0;
         const sx = Math.max(0, Math.min(sw - side, maxPanX + useOffsetX * maxPanX * 2));
         const sy = Math.max(0, Math.min(sh - side, maxPanY + useOffsetY * maxPanY * 2));
 
         ctx.save();
         shapePath(ctx, cur.shape, px);
         ctx.clip();
-        // Auto-center disables the manual face-light filter so the
-        // tracking and the brightness control are mutually exclusive
-        // (matches the disabled state of the slider in the panel).
-        const fl = cur.autoCenter ? 0 : (cur.faceLight || 0);
-        ctx.filter = combinedWebcamFilter(cur.effect, fl);
+        // Only apply the face filter on the outer draw when there's
+        // no background compositing. Otherwise `src` already contains
+        // the tinted face + untinted background from composeSegmented
+        // and tinting again would bleed into the background.
+        ctx.filter = cur.bgMode === 'none' ? faceFilterStr : 'none';
         ctx.drawImage(src, sx, sy, side, side, 0, 0, px, px);
         ctx.filter = 'none';
         ctx.restore();

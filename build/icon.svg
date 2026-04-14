@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#FF3D5A"/>
+      <stop offset="55%" stop-color="#E11D48"/>
+      <stop offset="100%" stop-color="#9F1239"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.35" cy="0.28" r="0.8">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="22"/>
+      <feOffset dx="0" dy="18"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.4"/></feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <!-- Rounded-square body (iOS/macOS 22% squircle ratio). -->
+    <rect x="64" y="64" width="896" height="896" rx="224" ry="224" fill="url(#body)"/>
+    <!-- Specular highlight sweep top-left for a subtle 3D feel. -->
+    <rect x="64" y="64" width="896" height="896" rx="224" ry="224" fill="url(#glow)"/>
+
+    <!-- Camcorder glyph — large, centred, simple. One body rectangle
+         with a small lens circle; a triangular viewfinder lens hood on
+         the right edge makes it unmistakably a camera at tiny sizes. -->
+    <g fill="#ffffff">
+      <!-- Main body: rounded rectangle, centred horizontally. -->
+      <rect x="232" y="360" width="440" height="304" rx="56" ry="56"/>
+      <!-- Lens hood: right-pointing trapezoid protruding from the body. -->
+      <path d="M 672 430
+               L 820 370
+               a 24 24 0 0 1 34 22
+               v 240
+               a 24 24 0 0 1 -34 22
+               l -148 -60 z"/>
+    </g>
+
+    <!-- Dark lens dot inside the body to add focal depth. -->
+    <circle cx="452" cy="512" r="64" fill="#9F1239"/>
+    <circle cx="452" cy="512" r="32" fill="#FF3D5A"/>
+  </g>
+</svg>

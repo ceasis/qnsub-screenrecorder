@@ -613,6 +613,57 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
     await dialog.showMessageBox(main!, { type: 'error', message });
   });
 
+  // ---------- Background image samples ----------
+  // Reads the `sample-background/` directory next to the app and hands
+  // back each image as a data URL so the renderer can drop it straight
+  // into an <img src> or the compositor's bgImage path without needing
+  // a custom protocol. Runs on every call (fast, the folder has only
+  // a handful of small files) so hot-adding new samples during dev
+  // Just Works without an app restart.
+  ipcMain.handle('bg:list-samples', async () => {
+    // Try a few likely locations so this works in dev (cwd = project
+    // root) and in packaged builds (files under resources/).
+    const candidates = [
+      join(process.cwd(), 'sample-background'),
+      join(app.getAppPath(), 'sample-background'),
+      join(process.resourcesPath || '', 'sample-background'),
+      join(__dirname, '..', '..', 'sample-background')
+    ];
+    let dir: string | null = null;
+    for (const c of candidates) {
+      try {
+        const st = await fs.stat(c);
+        if (st.isDirectory()) { dir = c; break; }
+      } catch {}
+    }
+    if (!dir) return [];
+    let entries: string[] = [];
+    try {
+      entries = await fs.readdir(dir);
+    } catch {
+      return [];
+    }
+    const out: { name: string; dataUrl: string }[] = [];
+    for (const name of entries) {
+      const lower = name.toLowerCase();
+      const ext =
+        lower.endsWith('.png') ? 'image/png' :
+        lower.endsWith('.jpg') || lower.endsWith('.jpeg') ? 'image/jpeg' :
+        lower.endsWith('.webp') ? 'image/webp' :
+        lower.endsWith('.avif') ? 'image/avif' :
+        lower.endsWith('.gif') ? 'image/gif' :
+        null;
+      if (!ext) continue;
+      try {
+        const buf = await fs.readFile(join(dir, name));
+        out.push({ name, dataUrl: `data:${ext};base64,${buf.toString('base64')}` });
+      } catch {}
+    }
+    // Stable alphabetical order so the gallery doesn't reshuffle.
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  });
+
   // ---------- Face Blur ----------
   // Let the renderer pick a local video file and hand back an
   // absolute path. Loaded via the custom `media://` protocol already

@@ -39,6 +39,7 @@ import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
 import { refineMaskGL } from './maskRefineGL';
+import { EFFECT_FILTERS, type WebcamEffect } from '../../shared/types';
 
 export type SegMode = 'none' | 'blur' | 'image';
 export type SegBackendId = 'selfie' | 'multiclass' | 'rvm';
@@ -535,13 +536,57 @@ let erodeCanvas: HTMLCanvasElement | null = null;
  *     then matte the live video through it and place a background
  *     behind.
  */
+// Compute a centred crop rectangle for a given zoom and pan offsets.
+// The crop preserves the SOURCE's aspect ratio (sw/z × sh/z) so the
+// face isn't horizontally stretched when drawn back into a non-square
+// output canvas. Offsets are -0.5..+0.5 and shift the crop window
+// inside the source. Returns rect in the source's pixel space.
+function centerCrop(sw: number, sh: number, zoom: number, offX: number, offY: number) {
+  const z = Math.max(1, zoom || 1);
+  const cropW = sw / z;
+  const cropH = sh / z;
+  const maxPanX = (sw - cropW) / 2;
+  const maxPanY = (sh - cropH) / 2;
+  const ox = Math.max(-0.5, Math.min(0.5, offX || 0));
+  const oy = Math.max(-0.5, Math.min(0.5, offY || 0));
+  const sx = Math.max(0, Math.min(sw - cropW, maxPanX + ox * maxPanX * 2));
+  const sy = Math.max(0, Math.min(sh - cropH, maxPanY + oy * maxPanY * 2));
+  return { sx, sy, sw: cropW, sh: cropH };
+}
+
 export function composeSegmented(
   video: HTMLVideoElement,
   mask: HTMLCanvasElement | null,
   matted: HTMLCanvasElement | null,
   mode: SegMode,
   bgImage: HTMLImageElement | null,
-  out: HTMLCanvasElement
+  out: HTMLCanvasElement,
+  // Colour filter applied to the replacement background IMAGE only,
+  // not to the foreground (face). The filter string comes from the
+  // shared EFFECT_FILTERS map so the background picks the same
+  // palette as the face Effect dropdown.
+  bgEffect: WebcamEffect = 'none',
+  // Extra Gaussian blur (in px) applied to the background layer
+  // regardless of mode. Works with both the real-room blur path
+  // and the replacement-image path, so users can soften a fake
+  // background OR stack additional blur on top of `mode === 'blur'`.
+  bgBlurPx: number = 0,
+  // Colour filter applied ONLY to the foreground face, not the
+  // background. Built by the caller via `combinedWebcamFilter` so it
+  // already includes the face-light adjustment if any. Passed as a
+  // pre-composed CSS filter string so the caller picks the palette
+  // once and we just apply it on the face draws inside.
+  faceFilter: string = 'none',
+  // Face-only zoom + offset. Applied via a centred crop on the video
+  // (or matted) draw so the face can be framed tighter without
+  // zooming the background along with it. Pan offsets are -0.5..+0.5.
+  faceZoom: number = 1,
+  faceOffsetX: number = 0,
+  faceOffsetY: number = 0,
+  // Independent background zoom — crops into the replacement image
+  // (or the blurred-room source) from the centre, so the user can
+  // "push in" to the fake scene without touching the face framing.
+  bgZoom: number = 1
 ): HTMLCanvasElement {
   const w = video.videoWidth || 640;
   const h = video.videoHeight || 480;
@@ -560,19 +605,49 @@ export function composeSegmented(
   // ---- Matting fast path (RVM) ----
   // Backend already produced a premultiplied foreground; we just need
   // to drop a background behind it.
+  // Combined filter for the replacement image: colour effect + optional
+  // extra Gaussian blur. Empty string means no filter.
+  const bgExtraBlur = Math.max(0, Math.min(80, bgBlurPx || 0));
+  const bgEffectFilter = EFFECT_FILTERS[bgEffect] || 'none';
+  const bgImageFilter = (() => {
+    const parts: string[] = [];
+    if (bgEffectFilter !== 'none') parts.push(bgEffectFilter);
+    if (bgExtraBlur > 0) parts.push(`blur(${bgExtraBlur}px)`);
+    return parts.join(' ') || 'none';
+  })();
+  // Real-room blur: 14px default + any extra the user added.
+  const roomBlur = 14 + bgExtraBlur;
+
+  // Pre-compute crop rects for each layer.
+  const vw = video.videoWidth || w;
+  const vh = video.videoHeight || h;
+  const faceCropVideo = centerCrop(vw, vh, faceZoom, faceOffsetX, faceOffsetY);
+  const bgCropVideo = centerCrop(vw, vh, bgZoom, 0, 0);
+  const bgCropImg = bgImage
+    ? centerCrop(bgImage.naturalWidth || w, bgImage.naturalHeight || h, bgZoom, 0, 0)
+    : { sx: 0, sy: 0, sw: w, sh: h };
+  const faceCropOut = centerCrop(w, h, faceZoom, faceOffsetX, faceOffsetY);
+  const faceCropMatted = matted
+    ? centerCrop(matted.width || w, matted.height || h, faceZoom, faceOffsetX, faceOffsetY)
+    : { sx: 0, sy: 0, sw: w, sh: h };
+
   if (matted) {
     if (mode === 'blur') {
-      ctx.filter = 'blur(14px)';
-      ctx.drawImage(video, 0, 0, w, h);
+      ctx.filter = `blur(${roomBlur}px)`;
+      ctx.drawImage(video, bgCropVideo.sx, bgCropVideo.sy, bgCropVideo.sw, bgCropVideo.sh, 0, 0, w, h);
       ctx.filter = 'none';
     } else if (mode === 'image' && bgImage && bgImage.complete) {
-      ctx.drawImage(bgImage, 0, 0, w, h);
+      if (bgImageFilter !== 'none') ctx.filter = bgImageFilter;
+      ctx.drawImage(bgImage, bgCropImg.sx, bgCropImg.sy, bgCropImg.sw, bgCropImg.sh, 0, 0, w, h);
+      ctx.filter = 'none';
     } else {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, w, h);
     }
     ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(matted, 0, 0, w, h);
+    if (faceFilter !== 'none') ctx.filter = faceFilter;
+    ctx.drawImage(matted, faceCropMatted.sx, faceCropMatted.sy, faceCropMatted.sw, faceCropMatted.sh, 0, 0, w, h);
+    ctx.filter = 'none';
     ctx.restore();
     return out;
   }
@@ -629,26 +704,33 @@ export function composeSegmented(
     maskSource = erodeCanvas;
   }
 
+  // Draw the (optionally eroded / refined) mask, applying the face
+  // zoom+offset crop so it lines up 1:1 with the zoomed face video
+  // below. maskSource dims are (w, h) so we use the output-space crop.
   ctx.save();
   if (refined) {
-    ctx.drawImage(maskSource, 0, 0, w, h);
+    ctx.drawImage(maskSource, faceCropOut.sx, faceCropOut.sy, faceCropOut.sw, faceCropOut.sh, 0, 0, w, h);
   } else {
     ctx.filter = 'blur(3px)';
-    ctx.drawImage(maskSource, 0, 0, w, h);
+    ctx.drawImage(maskSource, faceCropOut.sx, faceCropOut.sy, faceCropOut.sw, faceCropOut.sh, 0, 0, w, h);
     ctx.filter = 'none';
   }
   ctx.restore();
 
   ctx.globalCompositeOperation = 'source-in';
-  ctx.drawImage(video, 0, 0, w, h);
+  if (faceFilter !== 'none') ctx.filter = faceFilter;
+  ctx.drawImage(video, faceCropVideo.sx, faceCropVideo.sy, faceCropVideo.sw, faceCropVideo.sh, 0, 0, w, h);
+  ctx.filter = 'none';
 
   ctx.globalCompositeOperation = 'destination-over';
   if (mode === 'blur') {
-    ctx.filter = 'blur(14px)';
-    ctx.drawImage(video, 0, 0, w, h);
+    ctx.filter = `blur(${roomBlur}px)`;
+    ctx.drawImage(video, bgCropVideo.sx, bgCropVideo.sy, bgCropVideo.sw, bgCropVideo.sh, 0, 0, w, h);
     ctx.filter = 'none';
   } else if (mode === 'image' && bgImage && bgImage.complete) {
-    ctx.drawImage(bgImage, 0, 0, w, h);
+    if (bgImageFilter !== 'none') ctx.filter = bgImageFilter;
+    ctx.drawImage(bgImage, bgCropImg.sx, bgCropImg.sy, bgCropImg.sw, bgCropImg.sh, 0, 0, w, h);
+    ctx.filter = 'none';
   } else {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);

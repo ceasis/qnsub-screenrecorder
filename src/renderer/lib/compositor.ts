@@ -23,6 +23,15 @@ export type CursorZoomState = {
   // size of that display in CSS pixels, for normalization.
   displayW: number;
   displayH: number;
+  // How aggressively the smoothed crop chases the cursor. 0.02 = slow
+  // cinematic drift, 0.25 = aggressive follow. Expressed as the
+  // exponential-moving-average blend factor applied each frame.
+  followSpeed?: number;
+  // Delay (in milliseconds) before the crop starts chasing a new
+  // cursor target. Higher values "wait and see" — if the cursor
+  // moves away and comes back within the delay window the camera
+  // doesn't chase, which is the main cause of motion sickness.
+  followDelayMs?: number;
 };
 
 export type WebcamSettings = {
@@ -39,6 +48,29 @@ export type WebcamSettings = {
   faceLight: number; // 0..100 — soft fill-light intensity applied on top of effect
   autoCenter?: boolean; // override offsetX/Y with mask centroid tracking
   segBackend?: SegBackendId; // which segmentation/matting model to use
+  bgEffect?: WebcamEffect; // colour filter applied ONLY to the replacement background image
+  bgBlurPx?: number; // 0..40 extra Gaussian blur applied to the background layer (image OR real room)
+  bgZoom?: number; // 1..3 centred crop applied to the background image / blurred room
+  faceBlurPx?: number; // 0..40 Gaussian blur applied ONLY to the face (anonymise / soften)
+};
+
+export type TextOverlayEffect = 'none' | 'shadow' | 'outline' | 'glow';
+
+/**
+ * A single fixed text label rendered on top of every output frame.
+ * Position is normalized 0..1 in the output canvas so it scales with
+ * the output resolution. Size is in pixels at the output resolution.
+ */
+export type TextOverlay = {
+  text: string;
+  font: string;       // CSS font-family
+  size: number;       // px
+  color: string;      // CSS color
+  effect: TextOverlayEffect;
+  x: number;          // 0..1 (center x)
+  y: number;          // 0..1 (center y)
+  bold?: boolean;
+  italic?: boolean;
 };
 
 export class Compositor {
@@ -74,15 +106,27 @@ export class Compositor {
   private cfg: CompositorConfig;
   private webcamSettings: WebcamSettings;
   private arrows: Arrow[] = [];
+  private textOverlay: TextOverlay | null = null;
   private segmenter: WebcamSegmenter;
   private webcamOut: HTMLCanvasElement = document.createElement('canvas');
   private cursorZoom: CursorZoomState = {
-    enabled: false, factor: 1.6, x: 0, y: 0, displayW: 1920, displayH: 1080
+    enabled: false, factor: 1.3, x: 0, y: 0, displayW: 1920, displayH: 1080,
+    followSpeed: 0.08, followDelayMs: 300
   };
   // Smoothed cursor position (normalized 0..1 within the source crop).
   private smoothedNx = 0.5;
   private smoothedNy = 0.5;
   private smoothedZoom = 1;
+  // The committed target the EMA smoother is chasing. Only updated
+  // once the cursor has stayed AWAY from the current view for at
+  // least `followDelayMs` (see drawFrame logic).
+  private targetNx = 0.5;
+  private targetNy = 0.5;
+  // Wall-clock (ms) when the cursor first left the current committed
+  // target's zone. 0 = cursor is near the target and no commit is
+  // pending. Used to implement the "settle for N ms before chasing"
+  // behaviour without requiring the mouse to be completely still.
+  private farSinceMs = 0;
   // Stateful face auto-framing filter. See lib/autoFrame.ts — holds
   // framing when the face is partially off-screen so the pan doesn't
   // chase a clipped centroid.
@@ -114,6 +158,17 @@ export class Compositor {
 
   setCursorZoom(state: Partial<CursorZoomState>) {
     this.cursorZoom = { ...this.cursorZoom, ...state };
+  }
+
+  /** Set (or clear with `null`) the fixed text overlay rendered on every frame. */
+  setTextOverlay(t: TextOverlay | null) {
+    // Empty text string → treat as "no overlay" so the user clearing
+    // the input box removes the label without toggling another flag.
+    if (t && t.text.trim() === '') {
+      this.textOverlay = null;
+    } else {
+      this.textOverlay = t;
+    }
   }
 
   addArrow(a: Arrow) {
@@ -230,21 +285,72 @@ export class Compositor {
       // Apply cursor-zoom by shrinking the source rect around the smoothed
       // cursor position. We keep the rect clamped to the base crop so it
       // never samples outside the captured area.
+      //
+      // Two tunables control the motion-sickness feel of this effect:
+      //
+      //   - `followSpeed` — the exponential-moving-average blend factor.
+      //     Low = slow, cinematic drift; high = snappy follow.
+      //
+      //   - `followDelayMs` — a "hold" time before a new cursor target
+      //     is accepted. When the user flicks the mouse, we remember the
+      //     new position as a PENDING target but don't commit it to the
+      //     smoother until the cursor has been "still" for this many ms.
+      //     This kills twitchy chasing on micro-movements.
       const cz = this.cursorZoom;
       const targetZoom = cz.enabled ? Math.max(1, Math.min(3, cz.factor)) : 1;
-      // Smoothing: exponential moving average for both position and zoom
-      const smooth = 0.12;
-      this.smoothedZoom += (targetZoom - this.smoothedZoom) * smooth;
+      // Zoom smoothing stays fixed so the in/out transition feels consistent
+      // regardless of the follow-speed slider.
+      this.smoothedZoom += (targetZoom - this.smoothedZoom) * 0.12;
+
+      const followSpeed = Math.max(0.01, Math.min(0.4, cz.followSpeed ?? 0.08));
+      const followDelayMs = Math.max(0, Math.min(2000, cz.followDelayMs ?? 300));
 
       // Normalized cursor within the captured display (0..1). If the
-      // cursor position hasn't been reported yet, default to the center.
+      // cursor position hasn't been reported yet, default to the centre.
       let nx = 0.5, ny = 0.5;
       if (cz.enabled && cz.displayW > 0 && cz.displayH > 0) {
         nx = Math.max(0, Math.min(1, cz.x / cz.displayW));
         ny = Math.max(0, Math.min(1, cz.y / cz.displayH));
       }
-      this.smoothedNx += (nx - this.smoothedNx) * smooth;
-      this.smoothedNy += (ny - this.smoothedNy) * smooth;
+
+      // Dwell-before-chase gate:
+      //
+      //   1. Measure how far the raw cursor is from the currently
+      //      committed target.
+      //   2. If it's within a small "near" radius, reset the dwell
+      //      timer — the cursor is still roughly where the camera is
+      //      already pointing, nothing to do.
+      //   3. If it's outside that radius, start (or continue) a dwell
+      //      timer. Once the timer exceeds `followDelayMs` the cursor
+      //      is committed as the new target and the EMA smoother
+      //      starts chasing.
+      //
+      // Crucially this does NOT require the mouse to be completely
+      // still — only that the cursor has "moved away" from the
+      // current target for long enough. Continuous mouse movement
+      // around a UI still commits the target after the delay. Quick
+      // flicks that bounce back within the delay window are ignored.
+      const now = performance.now();
+      const tdx = nx - this.targetNx;
+      const tdy = ny - this.targetNy;
+      const dist = Math.hypot(tdx, tdy);
+      const NEAR_RADIUS = 0.03; // 3% of the captured display
+      if (dist < NEAR_RADIUS) {
+        this.farSinceMs = 0;
+      } else {
+        if (this.farSinceMs === 0) this.farSinceMs = now;
+        if (now - this.farSinceMs >= followDelayMs) {
+          // Commit the current cursor as the new target. On every
+          // subsequent frame the cursor may still be "far" (because
+          // the camera hasn't caught up yet), so keep updating the
+          // target so it tracks the live cursor while the EMA chases.
+          this.targetNx = nx;
+          this.targetNy = ny;
+        }
+      }
+
+      this.smoothedNx += (this.targetNx - this.smoothedNx) * followSpeed;
+      this.smoothedNy += (this.targetNy - this.smoothedNy) * followSpeed;
 
       const z = this.smoothedZoom;
       const zw = base.width / z;
@@ -274,10 +380,73 @@ export class Compositor {
 
     // Arrows
     this.drawArrows();
+
+    // Fixed text overlay — drawn last so it sits on top of webcam + arrows.
+    if (this.textOverlay) this.drawTextOverlay(this.textOverlay);
+  }
+
+  /**
+   * Render a TextOverlay on top of the output canvas. Position is
+   * normalized 0..1 in `outWidth / outHeight`. Effects:
+   *
+   *   - none    : flat fill
+   *   - outline : stroke twice the font weight around the fill
+   *   - shadow  : offset drop shadow
+   *   - glow    : centred soft shadow with high blur
+   */
+  private drawTextOverlay(t: TextOverlay) {
+    const text = t.text;
+    if (!text) return;
+    const ctx = this.ctx;
+    const ow = this.cfg.outWidth;
+    const oh = this.cfg.outHeight;
+
+    ctx.save();
+    const weight = t.bold ? '700' : '400';
+    const style = t.italic ? 'italic' : 'normal';
+    const px = Math.max(8, Math.min(400, t.size | 0));
+    ctx.font = `${style} ${weight} ${px}px ${t.font || 'sans-serif'}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = t.color || '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+
+    const cx = Math.round(Math.max(0, Math.min(1, t.x)) * ow);
+    const cy = Math.round(Math.max(0, Math.min(1, t.y)) * oh);
+
+    if (t.effect === 'shadow') {
+      ctx.shadowColor = 'rgba(0,0,0,0.75)';
+      ctx.shadowBlur = Math.max(4, px * 0.12);
+      ctx.shadowOffsetX = Math.max(2, px * 0.06);
+      ctx.shadowOffsetY = Math.max(2, px * 0.06);
+      ctx.fillText(text, cx, cy);
+    } else if (t.effect === 'outline') {
+      // Thick stroke first (clipped to even pixels with lineJoin=round
+      // so corners don't spike), then fill on top.
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.lineWidth = Math.max(2, px * 0.12);
+      ctx.strokeText(text, cx, cy);
+      ctx.fillText(text, cx, cy);
+    } else if (t.effect === 'glow') {
+      // Centred soft glow using shadow with zero offset. Multiple
+      // fills stack the glow for extra punch without being too slow.
+      ctx.shadowColor = t.color || '#ffffff';
+      ctx.shadowBlur = Math.max(8, px * 0.4);
+      ctx.fillText(text, cx, cy);
+      ctx.fillText(text, cx, cy);
+    } else {
+      ctx.fillText(text, cx, cy);
+    }
+    ctx.restore();
   }
 
   private async drawWebcam(video: HTMLVideoElement) {
-    const { shape, size, x, y, bgMode, bgImage, effect, zoom, offsetX, offsetY, faceLight, autoCenter } = this.webcamSettings;
+    const { shape, size, x, y, bgMode, bgImage, effect, zoom, offsetX, offsetY, faceLight, autoCenter, bgEffect, bgBlurPx, bgZoom, faceBlurPx } = this.webcamSettings;
     const px = WEBCAM_PX[size];
     const ctx = this.ctx;
     const cx = Math.round(x * (this.cfg.outWidth - px));
@@ -288,6 +457,22 @@ export class Compositor {
     // in-flight guard so we never queue more than one process() call.
     const wantSeg = bgMode !== 'none' || autoCenter === true;
     let src: CanvasImageSource = video;
+    // Build the face-only filter once so we can either:
+    //   - apply it INSIDE composeSegmented (segmentation / matting
+    //     path) where it only touches the face draws, not the
+    //     background; or
+    //   - apply it on the OUTER drawImage below when there's no
+    //     background compositing and `src` is still the raw video.
+    // Auto-center disables face-light to match the UI panel's
+    // disabled-slider state. Face blur stacks on top so the user can
+    // anonymise / soften themselves independently of the background.
+    const fl = autoCenter ? 0 : (faceLight || 0);
+    const baseFaceFilter = combinedWebcamFilter(effect, fl);
+    const fbPx = Math.max(0, Math.min(40, faceBlurPx || 0));
+    const faceFilterStr = fbPx > 0
+      ? (baseFaceFilter === 'none' ? `blur(${fbPx}px)` : `${baseFaceFilter} blur(${fbPx}px)`)
+      : baseFaceFilter;
+
     if (wantSeg) {
       if (!this.segPending) {
         this.segPending = true;
@@ -297,12 +482,23 @@ export class Compositor {
       }
       const mask = this.segmenter.getMaskCanvas();
       const matted = this.segmenter.getMatted();
-      if (bgMode !== 'none') {
-        src = composeSegmented(video, mask, matted, bgMode, bgImage, this.webcamOut);
-      }
       if (autoCenter) {
         const ctr = computeMaskCentroid(mask);
         updateAutoFrame(this.autoFrame, ctr);
+      }
+      if (bgMode !== 'none') {
+        // When a background mode is active, face zoom + pan are applied
+        // INSIDE composeSegmented so they only touch the face layer.
+        // Auto-center overrides manual offsets with the tracked
+        // centroid (same rule the outer draw uses in no-bg mode).
+        const useOffsetX = autoCenter ? this.autoFrame.x : offsetX;
+        const useOffsetY = autoCenter ? this.autoFrame.y : offsetY;
+        src = composeSegmented(
+          video, mask, matted, bgMode, bgImage, this.webcamOut,
+          bgEffect ?? 'none', bgBlurPx ?? 0, faceFilterStr,
+          zoom, useOffsetX, useOffsetY,
+          bgZoom ?? 1
+        );
       }
     }
 
@@ -312,25 +508,35 @@ export class Compositor {
     shapePath(ctx, shape, px);
     ctx.clip();
 
-    // Cover-fit with zoom and user offset. The offset slides the source
-    // crop window so the user can nudge their face inside the shape
-    // (e.g. push the crop upward for a star so the forehead stays visible).
-    // When auto-center is on, the smoothed centroid offsets override the
-    // manual sliders so the face stays framed as the user moves.
+    // Cover-fit crop. When bgMode is 'none' we apply face zoom + pan
+    // directly here against the raw video. Otherwise composeSegmented
+    // already zoomed / panned the face layer for us, so we just
+    // center-cover the composed canvas at 1× with no offsets.
     const sw = (src as HTMLVideoElement).videoWidth || (src as HTMLCanvasElement).width;
     const sh = (src as HTMLVideoElement).videoHeight || (src as HTMLCanvasElement).height;
-    const side = Math.min(sw, sh) / Math.max(1, zoom);
+    const outerZoom = bgMode === 'none' ? zoom : 1;
+    const side = Math.min(sw, sh) / Math.max(1, outerZoom);
     const maxPanX = (sw - side) / 2;
     const maxPanY = (sh - side) / 2;
-    const useOffsetX = autoCenter ? this.autoFrame.x : offsetX;
-    const useOffsetY = autoCenter ? this.autoFrame.y : offsetY;
-    const sx = Math.max(0, Math.min(sw - side, maxPanX + useOffsetX * maxPanX * 2));
-    const sy = Math.max(0, Math.min(sh - side, maxPanY + useOffsetY * maxPanY * 2));
+    const rawOffsetX = autoCenter ? this.autoFrame.x : offsetX;
+    const rawOffsetY = autoCenter ? this.autoFrame.y : offsetY;
+    const outerOffX = bgMode === 'none' ? rawOffsetX : 0;
+    const outerOffY = bgMode === 'none' ? rawOffsetY : 0;
+    const sx = Math.max(0, Math.min(sw - side, maxPanX + outerOffX * maxPanX * 2));
+    const sy = Math.max(0, Math.min(sh - side, maxPanY + outerOffY * maxPanY * 2));
 
-    // Auto-center disables the manual face-light filter to match the
-    // panel UI (the face-light slider is also disabled while on).
-    const fl = autoCenter ? 0 : (faceLight || 0);
-    ctx.filter = combinedWebcamFilter(effect, fl);
+    // When a background mode is active, `src` is a canvas that
+    // already includes BOTH the face (already filtered inside
+    // composeSegmented) AND the replacement background. Applying
+    // the face filter again here would tint the background too —
+    // that's the "grayscale face → grayscale background" bug.
+    // So only apply the filter on the outer draw when we're passing
+    // through the raw video.
+    if (bgMode === 'none') {
+      ctx.filter = faceFilterStr;
+    } else {
+      ctx.filter = 'none';
+    }
     ctx.drawImage(src, sx, sy, side, side, 0, 0, px, px);
     ctx.filter = 'none';
     ctx.restore();

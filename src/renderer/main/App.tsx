@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import RecorderTab from './Recorder';
 import EditorTab from './Editor';
 import FaceBlurTab from './FaceBlur';
+import HelpModal from './HelpModal';
 
 type Tab = 'recorder' | 'editor' | 'faceblur';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('recorder');
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Keep the floating webcam preview tied to the Recorder tab only.
   // The webcam window is intentionally NOT hidden when the main window
@@ -71,6 +73,21 @@ export default function App() {
             Editor
           </button>
           <button
+            className="tab tab-help"
+            onClick={() => setHelpOpen(true)}
+            title="Open the help &amp; features guide"
+            aria-label="Help"
+          >
+            <span className="tab-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4" />
+                <line x1="12" y1="17" x2="12" y2="17.01" />
+              </svg>
+            </span>
+            Help
+          </button>
+          <button
             className="tab tab-quit"
             onClick={() => (window as any).api?.quitApp?.()}
             title="Quit QNSub Studio"
@@ -102,6 +119,8 @@ export default function App() {
       <div className={`tab-panel ${tab === 'editor' ? 'active' : 'inactive'}`}>
         <EditorTab />
       </div>
+
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
 
       <footer className="app-footer">
         <button

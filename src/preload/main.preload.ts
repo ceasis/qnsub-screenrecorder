@@ -128,7 +128,11 @@ const api = {
   imgStop: (sessionId: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('faceblur:imgStop', sessionId),
   imgCancel: (sessionId: string): Promise<void> =>
-    ipcRenderer.invoke('faceblur:imgCancel', sessionId)
+    ipcRenderer.invoke('faceblur:imgCancel', sessionId),
+
+  // Background image samples
+  listBgSamples: (): Promise<{ name: string; dataUrl: string }[]> =>
+    ipcRenderer.invoke('bg:list-samples')
 };
 
 contextBridge.exposeInMainWorld('api', api);

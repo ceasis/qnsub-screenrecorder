@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\('fs'\\); const b=fs.readFileSync\\('tray-icon.png'\\); console.log\\('size',b.length,'bytes'\\); console.log\\('png?', b[0]===0x89 && b[1]===0x50\\)\")"
+    ]
+  }
+}
