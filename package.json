@@ -56,7 +56,7 @@
       "dist/**",
       "resources/**",
       "sample-background/**",
-      "tray-icon.png",
+      "build/tray-icon.png",
       "package.json"
     ],
     "asarUnpack": [

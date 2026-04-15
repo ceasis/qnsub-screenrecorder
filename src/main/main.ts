@@ -58,10 +58,10 @@ protocol.registerSchemesAsPrivileged([
  */
 function resolveTrayIconPath(): string | null {
   const candidates = [
-    join(process.cwd(), 'tray-icon.png'),                  // dev mode
-    join(__dirname, '..', '..', 'tray-icon.png'),          // dist/main → project root
-    join(process.resourcesPath || '', 'tray-icon.png'),    // packaged
-    join(app.getAppPath(), 'tray-icon.png')                // packaged fallback
+    join(process.cwd(), 'build', 'tray-icon.png'),          // dev mode
+    join(__dirname, '..', '..', 'build', 'tray-icon.png'),  // dist/main → project root
+    join(process.resourcesPath || '', 'tray-icon.png'),     // packaged
+    join(app.getAppPath(), 'build', 'tray-icon.png')        // packaged fallback
   ];
   for (const p of candidates) {
     try { if (p && existsSync(p)) return p; } catch { /* ignore */ }
