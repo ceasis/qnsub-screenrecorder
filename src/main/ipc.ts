@@ -10,7 +10,7 @@ import {
   createWebcamWindow
 } from './windows';
 import { remuxWebmToMp4 } from './ffmpeg';
-import { streamStart, streamChunk, streamStop, streamCancel } from './streamingRecorder';
+import { streamStart, streamChunk, streamStop, streamCancel, ffmpegUnavailableReason } from './streamingRecorder';
 import ffmpegStaticImport from 'ffmpeg-static';
 import type { ChildProcess } from 'child_process';
 
@@ -393,8 +393,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
       return { ok: false, error: 'mkdir failed: ' + (e?.message || String(e)) };
     }
     const outputPath = join(projectFolder, `original_${stamp}.mp4`);
+    const unusable = ffmpegUnavailableReason();
+    if (unusable) return { ok: false, error: unusable };
     const sessionId = streamStart({ outputPath, projectFolder, fps: opts?.fps });
-    if (!sessionId) return { ok: false, error: 'Failed to spawn ffmpeg' };
+    if (!sessionId) return { ok: false, error: 'Failed to spawn ffmpeg (spawn rejected). Check the main-process logs for details.' };
     return { ok: true, sessionId, outputPath, projectFolder };
   });
 
@@ -620,9 +622,11 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   // ScreenRecording_<stamp> folder.
   ipcMain.handle('faceblur:streamStart', async (_e, opts: { outputPath: string; fps?: number }) => {
     if (!opts?.outputPath) return { ok: false, error: 'No output path' };
+    const unusable = ffmpegUnavailableReason();
+    if (unusable) return { ok: false, error: unusable };
     const projectFolder = join(opts.outputPath, '..');
     const sessionId = streamStart({ outputPath: opts.outputPath, projectFolder, fps: opts?.fps });
-    if (!sessionId) return { ok: false, error: 'Failed to spawn ffmpeg' };
+    if (!sessionId) return { ok: false, error: 'Failed to spawn ffmpeg (spawn rejected). Check the main-process logs for details.' };
     return { ok: true, sessionId, outputPath: opts.outputPath };
   });
 

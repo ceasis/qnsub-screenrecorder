@@ -22,6 +22,21 @@ function resolveFfmpegPath(): string {
   return raw.replace('app.asar', 'app.asar.unpacked');
 }
 
+/**
+ * Returns null if ffmpeg is usable, or a human-readable explanation
+ * if it isn't. Exported so IPC handlers can show a specific error to
+ * the user instead of a generic "Failed to spawn ffmpeg" whenever
+ * the real cause is "ffmpeg-static has no binary for this platform".
+ */
+export function ffmpegUnavailableReason(): string | null {
+  const bin = resolveFfmpegPath();
+  if (!bin) {
+    return `ffmpeg-static has no binary for ${process.platform}/${process.arch}. ` +
+      `Rebuild the app with a compatible ffmpeg-static, or install ffmpeg system-wide and point at it manually.`;
+  }
+  return null;
+}
+
 type Session = {
   proc: ChildProcess;
   outputPath: string;

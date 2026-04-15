@@ -41,6 +41,13 @@ let aPosLoc = 0;
 let aUvLoc = 0;
 let initFailed = false;
 let inited = false;
+// True while the WebGL context is lost (GPU driver crash, laptop
+// sleep/resume, or the Chromium GPU process restarting). While lost,
+// `refineMaskGL` returns null so the caller falls back to the
+// canvas-2D erosion path. The `webglcontextrestored` listener clears
+// this flag and re-runs init() to rebuild the textures + program
+// against the new context.
+let contextLost = false;
 
 const VS = `
 attribute vec2 aPos;
@@ -111,12 +118,43 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
 }
 
 function init(): boolean {
-  if (inited) return !initFailed;
+  if (inited) return !initFailed && !contextLost;
   inited = true;
   try {
     glCanvas = document.createElement('canvas');
     glCanvas.width = 2;
     glCanvas.height = 2;
+    // Context-loss listeners. If the GPU driver crashes (or the
+    // laptop wakes from sleep, or Chromium's GPU process restarts),
+    // `webglcontextlost` fires and all our GL objects become
+    // invalid. We flip `contextLost` so refineMaskGL bails out and
+    // the caller falls back to canvas-2D. `webglcontextrestored`
+    // fires later when a fresh context is available; we clear the
+    // flag + reset the init state so the next refineMaskGL call
+    // rebuilds the program / textures against the new context.
+    glCanvas.addEventListener('webglcontextlost', (ev) => {
+      ev.preventDefault(); // required for webglcontextrestored to fire
+      console.warn('[maskRefineGL] WebGL context lost — falling back to canvas-2D path');
+      contextLost = true;
+    });
+    glCanvas.addEventListener('webglcontextrestored', () => {
+      console.log('[maskRefineGL] WebGL context restored — reinitialising');
+      // Reset module state so the next refineMaskGL call triggers a
+      // fresh init() against the new context. The previous GL
+      // objects (program, textures, buffer) are dead — drop refs.
+      contextLost = false;
+      inited = false;
+      initFailed = false;
+      gl = null;
+      program = null;
+      videoTex = null;
+      maskTex = null;
+      quadBuf = null;
+      uVideoLoc = null;
+      uMaskLoc = null;
+      uTexelLoc = null;
+      uEdgeLoc = null;
+    });
     gl = glCanvas.getContext('webgl', { premultipliedAlpha: false, antialias: false, alpha: true });
     if (!gl) { initFailed = true; return false; }
 
@@ -187,8 +225,18 @@ export function refineMaskGL(
   mask: HTMLCanvasElement,
   edgeBias: number = 0.5
 ): HTMLCanvasElement | null {
+  // Bail out while the GL context is gone — the caller falls back
+  // to the canvas-2D erosion path until `webglcontextrestored`
+  // fires and re-inits us.
+  if (contextLost) return null;
   if (!init()) return null;
   if (!gl || !glCanvas || !program || !videoTex || !maskTex || !quadBuf) return null;
+  // `gl.isContextLost()` catches the case where a context loss
+  // happened between init() returning true and the next draw call.
+  if (gl.isContextLost()) {
+    contextLost = true;
+    return null;
+  }
   const w = mask.width;
   const h = mask.height;
   if (w < 2 || h < 2) return null;

@@ -346,13 +346,20 @@ export function createVoiceChanger(
 
   applyConfig(cfg);
 
+  // Keep a mutable reference to `source` so close() can null it
+  // after disconnect. Without the null, the AudioContext graph held
+  // a hidden reference to the original mic MediaStream via the
+  // MediaStreamSource node, preventing GC from reclaiming the full
+  // audio pipeline across record / stop / record cycles.
+  let sourceRef: MediaStreamAudioSourceNode | null = source;
   return {
     stream: dest.stream,
     setConfig: applyConfig,
     close: () => {
       try { jungle.stop(); } catch {}
       tearDownFx();
-      try { source.disconnect(); } catch {}
+      try { sourceRef?.disconnect(); } catch {}
+      sourceRef = null;
       try { junglePre.disconnect(); } catch {}
       try { fxBus.disconnect(); } catch {}
       ctx.close().catch(() => {});

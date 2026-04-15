@@ -177,7 +177,31 @@ export class Compositor {
 
   setWebcamSettings(s: Partial<WebcamSettings>) {
     const prevBackend = this.webcamSettings.segBackend;
-    this.webcamSettings = { ...this.webcamSettings, ...s };
+    // Clamp numeric inputs so an out-of-range value from the UI / an
+    // external caller can't crash the draw loop. Canvas 2D throws on
+    // `filter: blur(-5px)` and `drawImage` rejects negative crop
+    // rects — clamping here protects every downstream draw path.
+    const clamped: Partial<WebcamSettings> = { ...s };
+    if (clamped.zoom !== undefined)
+      clamped.zoom = Math.max(1, Math.min(3, clamped.zoom));
+    if (clamped.offsetX !== undefined)
+      clamped.offsetX = Math.max(-0.5, Math.min(0.5, clamped.offsetX));
+    if (clamped.offsetY !== undefined)
+      clamped.offsetY = Math.max(-0.5, Math.min(0.5, clamped.offsetY));
+    if (clamped.faceLight !== undefined)
+      clamped.faceLight = Math.max(0, Math.min(100, clamped.faceLight));
+    if (clamped.x !== undefined)
+      clamped.x = Math.max(0, Math.min(1, clamped.x));
+    if (clamped.y !== undefined)
+      clamped.y = Math.max(0, Math.min(1, clamped.y));
+    if (clamped.bgBlurPx !== undefined)
+      clamped.bgBlurPx = Math.max(0, Math.min(40, clamped.bgBlurPx));
+    if (clamped.bgZoom !== undefined)
+      clamped.bgZoom = Math.max(1, Math.min(3, clamped.bgZoom));
+    if (clamped.faceBlurPx !== undefined)
+      clamped.faceBlurPx = Math.max(0, Math.min(40, clamped.faceBlurPx));
+
+    this.webcamSettings = { ...this.webcamSettings, ...clamped };
     if (s.segBackend && s.segBackend !== prevBackend) {
       // Hot-swap the segmenter in the background — old one keeps
       // serving frames until the new backend has finished init.
@@ -316,8 +340,11 @@ export class Compositor {
   private drawFrame() {
     const { screenVideo, webcamVideo, crop, outWidth, outHeight } = this.cfg;
     const ctx = this.ctx;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, outWidth, outHeight);
+    // The compositor canvas is allocated with `{ alpha: false }`, so
+    // clearRect produces opaque black (no alpha channel to be
+    // transparent). Cheaper than fillStyle + fillRect because it
+    // skips the style state change.
+    ctx.clearRect(0, 0, outWidth, outHeight);
 
     if (screenVideo.readyState >= 2) {
       const vw = screenVideo.videoWidth;
@@ -412,7 +439,17 @@ export class Compositor {
       const dh = src.height * scale;
       const dx = (outWidth - dw) / 2;
       const dy = (outHeight - dh) / 2;
-      ctx.drawImage(screenVideo, src.x, src.y, src.width, src.height, dx, dy, dw, dh);
+      try {
+        ctx.drawImage(screenVideo, src.x, src.y, src.width, src.height, dx, dy, dw, dh);
+      } catch (e) {
+        // Canvas 2D can throw here on certain Chromium edge cases —
+        // notably when the screen-capture decoder is mid-flight during
+        // a seek / device change, or when the source rect falls
+        // outside the video's currently-decoded frame. Swallowing it
+        // localises the failure to this one frame instead of letting
+        // the exception skip the webcam / arrows / text draws below.
+        console.warn('[Compositor] screen drawImage failed', e);
+      }
     }
 
     // Webcam overlay
@@ -536,7 +573,11 @@ export class Compositor {
       // until it's done). `getMaskCanvas()` / `getMatted()` return
       // whatever the last finished inference produced, so the skipped
       // frames reuse the most recent mask automatically.
-      const shouldInfer = (this.segFrameCounter++ & 1) === 0;
+      //
+      // Also gated on `this.running` so a stop() called mid-frame
+      // doesn't kick off a new async process() on a compositor that
+      // was about to close its segmenter.
+      const shouldInfer = this.running && (this.segFrameCounter++ & 1) === 0;
       if (shouldInfer && !this.segPending) {
         this.segPending = true;
         this.segmenter.process(video)
@@ -567,52 +608,59 @@ export class Compositor {
     }
 
     // Translate to top-left of the overlay so the shape path is local.
+    // Save/restore is wrapped in try/finally so an exception inside
+    // drawImage / filter parsing can't leak clip or transform state
+    // into the next frame — which would corrupt every subsequent
+    // draw until the compositor was rebuilt.
     ctx.save();
-    ctx.translate(cx, cy);
-    shapePath(ctx, shape, px);
-    ctx.clip();
+    try {
+      ctx.translate(cx, cy);
+      shapePath(ctx, shape, px);
+      ctx.clip();
 
-    // Cover-fit crop. When bgMode is 'none' we apply face zoom + pan
-    // directly here against the raw video. Otherwise composeSegmented
-    // already zoomed / panned the face layer for us, so we just
-    // center-cover the composed canvas at 1× with no offsets.
-    const sw = (src as HTMLVideoElement).videoWidth || (src as HTMLCanvasElement).width;
-    const sh = (src as HTMLVideoElement).videoHeight || (src as HTMLCanvasElement).height;
-    const outerZoom = bgMode === 'none' ? zoom : 1;
-    const side = Math.min(sw, sh) / Math.max(1, outerZoom);
-    const maxPanX = (sw - side) / 2;
-    const maxPanY = (sh - side) / 2;
-    const rawOffsetX = autoCenter ? this.autoFrame.x : offsetX;
-    const rawOffsetY = autoCenter ? this.autoFrame.y : offsetY;
-    const outerOffX = bgMode === 'none' ? rawOffsetX : 0;
-    const outerOffY = bgMode === 'none' ? rawOffsetY : 0;
-    const sx = Math.max(0, Math.min(sw - side, maxPanX + outerOffX * maxPanX * 2));
-    const sy = Math.max(0, Math.min(sh - side, maxPanY + outerOffY * maxPanY * 2));
+      // Cover-fit crop. When bgMode is 'none' we apply face zoom + pan
+      // directly here against the raw video. Otherwise composeSegmented
+      // already zoomed / panned the face layer for us, so we just
+      // center-cover the composed canvas at 1× with no offsets.
+      const sw = (src as HTMLVideoElement).videoWidth || (src as HTMLCanvasElement).width;
+      const sh = (src as HTMLVideoElement).videoHeight || (src as HTMLCanvasElement).height;
+      const outerZoom = bgMode === 'none' ? zoom : 1;
+      const side = Math.min(sw, sh) / Math.max(1, outerZoom);
+      const maxPanX = (sw - side) / 2;
+      const maxPanY = (sh - side) / 2;
+      const rawOffsetX = autoCenter ? this.autoFrame.x : offsetX;
+      const rawOffsetY = autoCenter ? this.autoFrame.y : offsetY;
+      const outerOffX = bgMode === 'none' ? rawOffsetX : 0;
+      const outerOffY = bgMode === 'none' ? rawOffsetY : 0;
+      const sx = Math.max(0, Math.min(sw - side, maxPanX + outerOffX * maxPanX * 2));
+      const sy = Math.max(0, Math.min(sh - side, maxPanY + outerOffY * maxPanY * 2));
 
-    // When a background mode is active, `src` is a canvas that
-    // already includes BOTH the face (already filtered inside
-    // composeSegmented) AND the replacement background. Applying
-    // the face filter again here would tint the background too —
-    // that's the "grayscale face → grayscale background" bug.
-    // So only apply the filter on the outer draw when we're passing
-    // through the raw video.
-    if (bgMode === 'none') {
-      ctx.filter = faceFilterStr;
-    } else {
+      // When a background mode is active, `src` is a canvas that
+      // already includes BOTH the face (already filtered inside
+      // composeSegmented) AND the replacement background. Applying
+      // the face filter again here would tint the background too.
+      if (bgMode === 'none') {
+        ctx.filter = faceFilterStr;
+      } else {
+        ctx.filter = 'none';
+      }
+      ctx.drawImage(src, sx, sy, side, side, 0, 0, px, px);
       ctx.filter = 'none';
+    } finally {
+      ctx.restore();
     }
-    ctx.drawImage(src, sx, sy, side, side, 0, 0, px, px);
-    ctx.filter = 'none';
-    ctx.restore();
 
-    // shape border
+    // Shape border — same try/finally guarantee.
     ctx.save();
-    ctx.translate(cx, cy);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#ffffff';
-    shapePath(ctx, shape, px);
-    ctx.stroke();
-    ctx.restore();
+    try {
+      ctx.translate(cx, cy);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#ffffff';
+      shapePath(ctx, shape, px);
+      ctx.stroke();
+    } finally {
+      ctx.restore();
+    }
   }
 
   private drawArrows() {

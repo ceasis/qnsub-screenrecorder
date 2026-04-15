@@ -206,6 +206,54 @@ const EFFECT_ICONS: Record<WebcamEffect, React.ReactNode> = {
 };
 
 export default function RecorderTab() {
+  // One-shot localStorage maintenance on mount.
+  //
+  //   1. Remove `rec.webcamAutoRelocate` — a key from the removed
+  //      auto-relocate feature. Harmless but dead data.
+  //   2. If `rec.bgImageData` holds an oversized base64 PNG from
+  //      before the upload-time downscale was added, re-decode and
+  //      re-compress it as a ≤1920-wide JPEG at 0.85 quality. Keeps
+  //      localStorage slim for users who uploaded before the fix.
+  //
+  // Wrapped in try/catch because bad localStorage state (quota full,
+  // bad base64) shouldn't block the Recorder from rendering.
+  useEffect(() => {
+    try {
+      localStorage.removeItem('rec.webcamAutoRelocate');
+    } catch {}
+    try {
+      const raw = localStorage.getItem('rec.bgImageData');
+      if (!raw) return;
+      // Stored values are wrapped in JSON quotes by usePersistedState.
+      let parsed: string;
+      try { parsed = JSON.parse(raw); } catch { return; }
+      if (typeof parsed !== 'string' || !parsed.startsWith('data:image/')) return;
+      // 1.5 MB cutoff. Anything larger gets re-encoded.
+      if (parsed.length < 1_500_000) return;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX = 1920;
+          const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+          const w = Math.max(1, Math.round(img.naturalWidth * scale));
+          const h = Math.max(1, Math.round(img.naturalHeight * scale));
+          const c = document.createElement('canvas');
+          c.width = w;
+          c.height = h;
+          const cctx = c.getContext('2d');
+          if (!cctx) return;
+          cctx.drawImage(img, 0, 0, w, h);
+          const smaller = c.toDataURL('image/jpeg', 0.85);
+          if (smaller.length < parsed.length) {
+            localStorage.setItem('rec.bgImageData', JSON.stringify(smaller));
+            console.log('[Recorder] compressed stored bgImageData', parsed.length, '→', smaller.length);
+          }
+        } catch {}
+      };
+      img.src = parsed;
+    } catch {}
+  }, []);
+
   const [sources, setSources] = useState<ScreenSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
@@ -1303,7 +1351,7 @@ export default function RecorderTab() {
                         onClick={() => setBgImageData(s.dataUrl)}
                         title={s.name}
                       >
-                        <img src={s.dataUrl} alt={s.name} />
+                        <img src={s.dataUrl} alt={s.name} loading="lazy" decoding="async" />
                       </button>
                     );
                   })}
@@ -1955,7 +2003,7 @@ export default function RecorderTab() {
             <div className="row two-col">
               <span className="row-label" />
               <p className="hint row-ctrl" style={{ color: 'var(--muted)' }}>
-                Enable “Include me on screen” in step 6 to use these settings.
+                Enable “Include me on screen” in the Webcam panel to use these settings.
               </p>
             </div>
           )}

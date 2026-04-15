@@ -33,7 +33,7 @@
 // filter graph; no frame dumps to disk.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { detectFaces, initFaceDetector, type FaceDetection } from '../lib/faceDetect';
+import { detectFaces, initFaceDetector, closeFaceDetector, type FaceDetection } from '../lib/faceDetect';
 import { FaceTrackerSession, sampleTrackAt, type FaceTrack } from '../lib/faceTracker';
 import { drawObscuredFaceFromVideo, paddedFaceRect } from '../lib/faceBlurObscure';
 
@@ -206,6 +206,18 @@ export default function FaceBlurTab() {
   // machine. If you ever need to handle huge files, switch to a
   // local HTTP server listening on 127.0.0.1 with Range support —
   // that's the other "always works" approach.
+
+  // Tear down the MediaPipe FaceDetector when the user navigates
+  // away from the Face Blur tab so the model + WebGL context go
+  // back to the OS. Without this, the detector lives forever until
+  // the app quits, pinning ~2MB + GPU memory. Reopening the tab
+  // lazily re-inits on the next detection pass.
+  useEffect(() => {
+    return () => {
+      try { closeFaceDetector(); } catch {}
+    };
+  }, []);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !videoPath) return;
@@ -548,10 +560,19 @@ export default function FaceBlurTab() {
     const seekTo = (t: number) =>
       new Promise<void>((resolve) => {
         let seekedReceived = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
         const onSeeked = () => {
           if (seekedReceived) return;
           seekedReceived = true;
           v.removeEventListener('seeked', onSeeked);
+          // Clear the safety timer as soon as the seeked event fires
+          // normally. Without this, each seek leaks a dead 1.5s timer
+          // that fires later as a no-op — over a long detection pass
+          // that's hundreds of queued timers stacking up.
+          if (safetyTimer != null) {
+            clearTimeout(safetyTimer);
+            safetyTimer = null;
+          }
           // Do NOT rely on requestVideoFrameCallback here: this pass keeps the
           // video paused, and Chromium/Electron often never runs rVFC callbacks
           // while paused — the promise would hang forever after "first seek".
@@ -561,7 +582,8 @@ export default function FaceBlurTab() {
         };
         v.addEventListener('seeked', onSeeked);
         // Safety timeout so a failed seek can't hang the whole pass.
-        setTimeout(() => {
+        safetyTimer = setTimeout(() => {
+          safetyTimer = null;
           if (seekedReceived) return;
           seekedReceived = true;
           v.removeEventListener('seeked', onSeeked);
@@ -793,14 +815,20 @@ export default function FaceBlurTab() {
     const seekTo = (t: number) =>
       new Promise<void>((resolve) => {
         let settled = false;
+        let safetyTimer: ReturnType<typeof setTimeout> | null = null;
         const onSeeked = () => {
           if (settled) return;
           settled = true;
           v.removeEventListener('seeked', onSeeked);
+          if (safetyTimer != null) {
+            clearTimeout(safetyTimer);
+            safetyTimer = null;
+          }
           waitAfterSeeked().then(() => resolve());
         };
         v.addEventListener('seeked', onSeeked);
-        setTimeout(() => {
+        safetyTimer = setTimeout(() => {
+          safetyTimer = null;
           if (settled) return;
           settled = true;
           v.removeEventListener('seeked', onSeeked);

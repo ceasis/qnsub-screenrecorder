@@ -326,6 +326,24 @@ class RvmBackend implements Backend {
     try { (this.session as any)?.release?.(); } catch {}
     this.session = null;
     this.ready = false;
+    this.haveMatted = false;
+    // Release the large pixel / tensor buffers. Shrinking the
+    // canvases to 1x1 frees their backing pixel store without
+    // invalidating the references, and replacing rgbBuffer with a
+    // tiny array drops the ~1MB float32 working buffer. The backend
+    // shouldn't be used again after close — makeBackend creates a
+    // fresh instance on swap — but this keeps memory tidy during
+    // hot-swaps between backends.
+    try { this.inputCanvas.width = 1; this.inputCanvas.height = 1; } catch {}
+    try { this.mattedCanvas.width = 1; this.mattedCanvas.height = 1; } catch {}
+    try { this.maskCanvas.width = 1; this.maskCanvas.height = 1; } catch {}
+    this.rgbBuffer = new Float32Array(1);
+    // Also release the recurrent state tensors so GC can reclaim
+    // them — these can be tens of MB at higher downsample ratios.
+    this.r1 = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+    this.r2 = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+    this.r3 = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
+    this.r4 = new ort.Tensor('float32', new Float32Array([0]), [1, 1, 1, 1]);
   }
 }
 
@@ -431,8 +449,13 @@ export class WebcamSegmenter {
 // expensive; downscaling to 64x48 first is ~100x cheaper and the
 // centroid is still accurate to within a couple of source pixels.
 let centroidCanvas: HTMLCanvasElement | null = null;
-const CENTROID_W = 64;
-const CENTROID_H = 48;
+// 32x24 scratch canvas for mask centroid detection. Dropped from
+// 64x48 → 32x24 (¼ the pixel count) because `getImageData` forces a
+// GPU→CPU readback and the centroid accuracy difference at this tiny
+// scale is well below one source pixel. Saves ~2KB of ImageData
+// allocation plus the readback cost every frame auto-center is on.
+const CENTROID_W = 32;
+const CENTROID_H = 24;
 
 /**
  * Compute the head centroid from the segmentation mask, normalized to
@@ -489,7 +512,12 @@ export function computeMaskCentroid(
       if (any) { botRow = y; break; }
     }
     const personHeight = botRow - topRow + 1;
-    const sliceRows = Math.max(4, Math.min(14, Math.round(personHeight * 0.28)));
+    // Slice bounds scale with CENTROID_H so lowering the centroid
+    // resolution doesn't reject tiny heads (old floor was 4/48 ≈ 8%,
+    // new floor 2/24 keeps the same proportion).
+    const sliceFloor = Math.max(2, Math.round(CENTROID_H / 12));
+    const sliceCeil = Math.max(4, Math.round(CENTROID_H / 3.5));
+    const sliceRows = Math.max(sliceFloor, Math.min(sliceCeil, Math.round(personHeight * 0.28)));
     const sliceBot = topRow + sliceRows;
 
     let sumX = 0, sumY = 0, total = 0;
