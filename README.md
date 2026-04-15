@@ -37,7 +37,7 @@ QNSub Studio is one of several tools built in public. If you like how this one i
 
 If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer:
 
-- **Windows** — [Download QNSub Studio Setup 0.1.4 (.exe)](https://pub-85c4f8fe2d3341149c5f19d57efdcc7c.r2.dev/QNSub-ScreenRecorder-Setup-0.1.4.exe)
+- **Windows** — [Download QNSub Studio Setup 0.1.7 (.exe)](https://pub-85c4f8fe2d3341149c5f19d57efdcc7c.r2.dev/QNSub-ScreenRecorder-Setup-0.1.7.exe)
 - **macOS** — coming soon (ping the maintainer if you need a build)
 
 The installer is **not** code-signed yet, so Windows SmartScreen will show a blue "Windows protected your PC" warning on first launch. Click **More info → Run anyway** to proceed — it's a one-time prompt, the installer is safe, and the warning disappears once a handful of users have installed it and Microsoft's reputation system catches up. If you want zero warnings, build from source (instructions further down).
