@@ -375,6 +375,57 @@ const SECTIONS: Section[] = [
             </a>
           ))}
         </div>
+        <a
+          href="https://paypal.me/qnsub/1000USD"
+          target="_blank"
+          rel="noopener"
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 8,
+            padding: '18px 22px',
+            marginBottom: 12,
+            borderRadius: 12,
+            border: '1px solid rgba(255, 200, 60, 0.45)',
+            background: 'linear-gradient(135deg, rgba(255, 200, 60, 0.12) 0%, rgba(225, 29, 72, 0.12) 100%)',
+            textDecoration: 'none',
+            transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(255, 200, 60, 0.8)';
+            e.currentTarget.style.boxShadow = '0 10px 24px rgba(255, 200, 60, 0.22)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(255, 200, 60, 0.45)';
+            e.currentTarget.style.boxShadow = 'none';
+          }}
+        >
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: '0.12em',
+              textTransform: 'uppercase',
+              color: '#ffd96b',
+              padding: '3px 10px',
+              borderRadius: 999,
+              border: '1px solid rgba(255, 200, 60, 0.5)',
+              background: 'rgba(255, 200, 60, 0.12)'
+            }}
+          >
+            🏆 Sponsor tier
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 28 }}>🖥️☕</span>
+            <span style={{ fontSize: 30, fontWeight: 800, color: '#ffd96b', letterSpacing: '-0.02em' }}>
+              $1,000
+            </span>
+          </div>
+          <span style={{ fontSize: 12.5, color: '#9aa3b2', textAlign: 'center' }}>
+            Pays for a full year of project hosting, domain, signing cert & CI
+          </span>
+        </a>
         <p className="muted" style={{ fontSize: 12 }}>
           Prefer a custom amount? Just open{' '}
           <a href="https://paypal.me/qnsub" target="_blank" rel="noopener">

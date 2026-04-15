@@ -307,6 +307,51 @@
       color: var(--muted);
       font-weight: 500;
     }
+    /* Hero "pays for hosting" tier */
+    .coffee-card-hero {
+      max-width: 820px;
+      margin: 20px auto 0;
+      padding: 24px 28px;
+      gap: 10px;
+      border: 1px solid rgba(255, 200, 60, 0.45);
+      background: linear-gradient(135deg, rgba(255, 200, 60, 0.12) 0%, rgba(225, 29, 72, 0.12) 100%);
+      position: relative;
+    }
+    .coffee-card-hero:hover {
+      border-color: rgba(255, 200, 60, 0.8);
+      box-shadow: 0 14px 32px rgba(255, 200, 60, 0.22);
+    }
+    .coffee-hero-badge {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ffd96b;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 200, 60, 0.5);
+      background: rgba(255, 200, 60, 0.12);
+    }
+    .coffee-hero-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-top: 4px;
+    }
+    .coffee-hero-emoji { font-size: 34px; }
+    .coffee-hero-amount {
+      font-size: 38px;
+      font-weight: 800;
+      color: #ffd96b;
+      letter-spacing: -0.02em;
+    }
+    .coffee-hero-label {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 500;
+      text-align: center;
+      max-width: 540px;
+    }
 
     /* ---- Footer ---- */
     .footer {
@@ -653,6 +698,14 @@
         <span class="coffee-label">12 months of coffee</span>
       </a>
     </div>
+    <a href="https://paypal.me/qnsub/1000USD" target="_blank" rel="noopener" class="coffee-card coffee-card-hero">
+      <span class="coffee-hero-badge">🏆 Sponsor tier</span>
+      <div class="coffee-hero-row">
+        <span class="coffee-hero-emoji">🖥️☕</span>
+        <span class="coffee-hero-amount">$1,000</span>
+      </div>
+      <span class="coffee-hero-label">Pays for a full year of project hosting, domain, signing cert &amp; CI</span>
+    </a>
     <p style="text-align: center; margin-top: 22px; font-size: 14px; color: var(--dim);">
       Prefer a custom amount? Open
       <a href="https://paypal.me/qnsub" target="_blank" rel="noopener" style="color: var(--accent-bright); border-bottom: 1px dotted var(--accent-bright);">paypal.me/qnsub</a>
