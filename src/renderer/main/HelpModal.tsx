@@ -476,9 +476,9 @@ const SECTIONS: Section[] = [
                 transition: 'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = '#ff3d5a';
+                e.currentTarget.style.borderColor = '#6fb6ff';
                 e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = '0 8px 18px rgba(225, 29, 72, 0.22)';
+                e.currentTarget.style.boxShadow = '0 8px 18px rgba(111, 182, 255, 0.2)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.borderColor = '#262d36';
@@ -486,7 +486,7 @@ const SECTIONS: Section[] = [
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#ff6b7a' }}>{p.domain}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{p.domain}</span>
               <span style={{ fontSize: 11, color: '#6b7380' }}>{p.tag}</span>
             </a>
           ))}
