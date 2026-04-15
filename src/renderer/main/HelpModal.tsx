@@ -433,6 +433,64 @@ const SECTIONS: Section[] = [
           </a>
           {' '}and type your own.
         </p>
+        <h4>Other projects by the same maintainer</h4>
+        <p>
+          QNSub Studio is one of several tools built in public. If you
+          like how this one is put together, the rest of the lineup
+          might be worth a look.
+        </p>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+            gap: 10,
+            marginTop: 10
+          }}
+        >
+          {[
+            { domain: 'qnsub.com', tag: 'Studio home' },
+            { domain: 'anythingtext.com', tag: 'Text tools' },
+            { domain: 'rescanflow.com', tag: 'Scan workflow' },
+            { domain: 'cvscorecard.com', tag: 'CV scoring' },
+            { domain: 'backerspot.com', tag: 'Backers' },
+            { domain: 'whatsaifor.com', tag: 'AI use cases' },
+            { domain: 'langswarm.com', tag: 'Language' },
+            { domain: 'tym.io', tag: 'tym.io' }
+          ].map((p) => (
+            <a
+              key={p.domain}
+              href={`https://${p.domain}`}
+              target="_blank"
+              rel="noopener"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 3,
+                padding: '12px 8px',
+                borderRadius: 10,
+                border: '1px solid #262d36',
+                background: 'linear-gradient(160deg, #161b22 0%, #0d1117 100%)',
+                textDecoration: 'none',
+                transition: 'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#ff3d5a';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 8px 18px rgba(225, 29, 72, 0.22)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#262d36';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#ff6b7a' }}>{p.domain}</span>
+              <span style={{ fontSize: 11, color: '#6b7380' }}>{p.tag}</span>
+            </a>
+          ))}
+        </div>
       </>
     )
   },

@@ -353,6 +353,52 @@
       max-width: 540px;
     }
 
+    /* ---- Other projects grid ---- */
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    @media (max-width: 860px) {
+      .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 440px) {
+      .project-grid { grid-template-columns: 1fr; }
+    }
+    .project-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 18px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: linear-gradient(160deg, var(--bg-card) 0%, var(--bg) 100%);
+      color: var(--text);
+      text-decoration: none;
+      transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .project-card:hover {
+      text-decoration: none;
+      border-color: var(--accent-bright);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 24px rgba(225, 29, 72, 0.22);
+    }
+    .project-card .project-domain {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--accent-bright);
+      letter-spacing: -0.01em;
+    }
+    .project-card .project-tag {
+      font-size: 12px;
+      color: var(--dim);
+      font-weight: 500;
+    }
+
     /* ---- Footer ---- */
     .footer {
       border-top: 1px solid var(--border);
@@ -711,6 +757,52 @@
       <a href="https://paypal.me/qnsub" target="_blank" rel="noopener" style="color: var(--accent-bright); border-bottom: 1px dotted var(--accent-bright);">paypal.me/qnsub</a>
       and type your own.
     </p>
+  </div>
+</section>
+
+<section class="section" id="other-projects">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>Other projects by the same maintainer</h2>
+      <p>
+        QNSub Studio is one of several tools built in public. If you like the way this one is put
+        together, you may find something useful in the rest of the lineup.
+      </p>
+    </div>
+    <div class="project-grid">
+      <a href="https://qnsub.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">qnsub.com</span>
+        <span class="project-tag">Studio home</span>
+      </a>
+      <a href="https://anythingtext.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">anythingtext.com</span>
+        <span class="project-tag">Text tools</span>
+      </a>
+      <a href="https://rescanflow.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">rescanflow.com</span>
+        <span class="project-tag">Scan workflow</span>
+      </a>
+      <a href="https://cvscorecard.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">cvscorecard.com</span>
+        <span class="project-tag">CV scoring</span>
+      </a>
+      <a href="https://backerspot.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">backerspot.com</span>
+        <span class="project-tag">Backers</span>
+      </a>
+      <a href="https://whatsaifor.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">whatsaifor.com</span>
+        <span class="project-tag">AI use cases</span>
+      </a>
+      <a href="https://langswarm.com" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">langswarm.com</span>
+        <span class="project-tag">Language</span>
+      </a>
+      <a href="https://tym.io" target="_blank" rel="noopener" class="project-card">
+        <span class="project-domain">tym.io</span>
+        <span class="project-tag">tym.io</span>
+      </a>
+    </div>
   </div>
 </section>
 

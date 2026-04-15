@@ -19,6 +19,19 @@ ship your own build. No telemetry, no accounts, no cloud round-trips.
 
 > ⭐ **If this project is useful to you, please [star the repo on GitHub](https://github.com/ceasis/qnsub-screenrecorder)** — it costs nothing, takes one click, and is the single biggest thing you can do to help. Stars drive GitHub's discovery algorithm, so every extra star puts QNSub Studio in front of more people who need a free, open-source screen recorder. It's also the only metric I actually watch to decide how much time to pour into new features.
 
+### Other projects by the same maintainer
+
+QNSub Studio is one of several tools built in public. If you like how this one is put together, the rest of the lineup might be worth a look:
+
+- **[qnsub.com](https://qnsub.com)** — studio home
+- **[anythingtext.com](https://anythingtext.com)** — text tools
+- **[rescanflow.com](https://rescanflow.com)** — scan workflow
+- **[cvscorecard.com](https://cvscorecard.com)** — CV scoring
+- **[backerspot.com](https://backerspot.com)** — backers
+- **[whatsaifor.com](https://whatsaifor.com)** — AI use cases
+- **[langswarm.com](https://langswarm.com)** — language
+- **[tym.io](https://tym.io)** — tym.io
+
 ## Download the latest build
 
 If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer from Google Drive:
