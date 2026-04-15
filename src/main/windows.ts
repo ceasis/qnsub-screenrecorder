@@ -200,16 +200,34 @@ export function createSplashWindow(): BrowserWindow {
     font-weight: 500;
   }
   .spinner {
-    margin-top: 8px;
-    width: 22px;
-    height: 22px;
-    border: 2px solid #262d36;
-    border-top-color: #e11d48;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    margin-top: 10px;
+    width: 150px;
+    height: 3px;
+    border-radius: 999px;
+    background: #1b2028;
+    overflow: hidden;
+    position: relative;
   }
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  .spinner::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    border-radius: 999px;
+    background: linear-gradient(90deg,
+      rgba(225, 29, 72, 0) 0%,
+      #ff3d5a 35%,
+      #ff6b7a 50%,
+      #ff3d5a 65%,
+      rgba(225, 29, 72, 0) 100%);
+    box-shadow: 0 0 12px rgba(255, 61, 90, 0.55);
+    animation: slide 1.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  }
+  @keyframes slide {
+    0%   { left: -40%; }
+    100% { left: 100%; }
   }
   .credits {
     margin-top: 14px;
