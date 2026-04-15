@@ -11,6 +11,9 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "bump": "npm --no-git-tag-version version patch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dist": "npm run bump && npm run build && electron-builder -mw",
     "dist:win": "npm run bump && npm run build && electron-builder --win nsis",
     "dist:mac": "npm run bump && npm run build && electron-builder --mac dmg"
@@ -28,13 +31,15 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^4.1.4",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.3.0",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.34.5",
     "typescript": "^5.5.0",
-    "vite": "^5.3.0"
+    "vite": "^5.3.0",
+    "vitest": "^4.1.4"
   },
   "build": {
     "appId": "com.qnsub.screenrecorder",

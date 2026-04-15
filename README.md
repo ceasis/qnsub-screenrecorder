@@ -1,31 +1,32 @@
 # QNSub Studio
 
+[![tests](https://github.com/choloasis/qnsub-screenrecorder/actions/workflows/test.yml/badge.svg)](https://github.com/choloasis/qnsub-screenrecorder/actions/workflows/test.yml)
+![license](https://img.shields.io/badge/license-Source--available-blue)
+![electron](https://img.shields.io/badge/electron-31-47848f)
+![typescript](https://img.shields.io/badge/typescript-5.5-3178c6)
+
 A full-featured cross-platform **screen recorder + face-cam studio + post-production toolbox**, built with Electron + React + TypeScript.
 
 ## Download the latest build
 
-If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer:
+If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer from Google Drive:
 
-> **TODO:** add the S3 download URL here once it's provisioned.
->
-> ```
-> Windows  : https://<your-s3-bucket>/qnsub-studio/latest/QNSub-Studio-Setup.exe
-> macOS    : https://<your-s3-bucket>/qnsub-studio/latest/QNSub-Studio.dmg
-> ```
+- **Windows** — [QNSub Studio Setup (.exe) on Google Drive](https://drive.google.com/file/d/1WiiG7oKtfbUybBLH0OxqdwN5yZuUijJY/view?usp=sharing)
+- **macOS** — coming soon (ping the maintainer if you need a build)
 
-Replace the `<your-s3-bucket>` placeholders above with the real bucket / key the maintainer provides. The installers are signed and self-contained — no extra runtime needed.
+The installer is **not** code-signed yet, so Windows SmartScreen will show a blue "Windows protected your PC" warning on first launch. Click **More info → Run anyway** to proceed — it's a one-time prompt, the installer is safe, and the warning disappears once a handful of users have installed it and Microsoft's reputation system catches up. If you want zero warnings, build from source (instructions further down).
 
 ### Install on Windows
 
-1. Download `QNSub-Studio-Setup.exe`.
-2. Double-click and follow the NSIS installer (it lets you pick the install location and create shortcuts).
-3. Launch **QNSub Studio** from the Start Menu.
+1. Open the Google Drive link above and click **Download** (the arrow icon at the top). Google Drive may show a "can't scan this file for viruses" notice because the installer is larger than the scan limit — click **Download anyway**.
+2. Run the downloaded `QNSub Screen Recorder Setup X.Y.Z.exe`.
+3. If Windows SmartScreen appears, click **More info → Run anyway**.
+4. Follow the NSIS installer (pick install location, create shortcuts).
+5. Launch **QNSub Studio** from the Start Menu.
 
 ### Install on macOS
 
-1. Download `QNSub-Studio.dmg`.
-2. Open the DMG and drag **QNSub Studio** into your Applications folder.
-3. The first launch needs **Screen Recording** permission — System Settings → Privacy & Security → Screen Recording → enable QNSub Studio.
+Not yet published. If you need a macOS build right now, follow the **Build it yourself** section below — `npm run dist:mac` produces a ready-to-ship DMG.
 
 ---
 
@@ -78,7 +79,6 @@ The `out/` directory contains the installer + supporting files. `electron-builde
   - **±** zoom buttons + mouse-wheel zoom directly over the bubble.
   - **Auto-center** tracks the segmentation-mask centroid with confidence-gated, jitter-free smoothing.
   - **Face light** — soft fill-light filter (brightness + warmth + saturation).
-  - **Auto Relocate Face Cam** — slides sideways out of the cursor's way and glides back when clear.
   - **Auto Reduce Opacity of Face Cam** — fades translucent when the cursor is near and returns to full opacity when you move away.
   - Background **blur**, built-in scenes, or **upload your own image** (matted via MediaPipe Selfie Segmentation).
   - Per-effect filters for the **face only** (so the background isn't tinted along with you).

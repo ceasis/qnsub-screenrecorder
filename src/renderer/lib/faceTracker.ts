@@ -25,6 +25,7 @@
 // All coordinates are in the source-video pixel space.
 
 import type { FaceDetection } from './faceDetect';
+import { iouRect } from '../../shared/mathUtils';
 
 export type TrackedFace = {
   // Bounding box at a specific moment in the source video. Stored as
@@ -54,21 +55,10 @@ export type FaceTrack = {
   length: number;
 };
 
+// Delegates to the shared pure `iouRect` so both the tracker and
+// the test suite use the exact same math.
 function iou(a: FaceDetection, b: TrackedFace): number {
-  const ax2 = a.x + a.width;
-  const ay2 = a.y + a.height;
-  const bx2 = b.x + b.width;
-  const by2 = b.y + b.height;
-  const ix1 = Math.max(a.x, b.x);
-  const iy1 = Math.max(a.y, b.y);
-  const ix2 = Math.min(ax2, bx2);
-  const iy2 = Math.min(ay2, by2);
-  const iw = Math.max(0, ix2 - ix1);
-  const ih = Math.max(0, iy2 - iy1);
-  const inter = iw * ih;
-  if (inter === 0) return 0;
-  const union = a.width * a.height + b.width * b.height - inter;
-  return inter / union;
+  return iouRect(a, b);
 }
 
 type OpenTrack = {

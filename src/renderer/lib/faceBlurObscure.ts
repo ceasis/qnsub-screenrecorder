@@ -9,6 +9,11 @@
  * moderate radii the difference is barely noticeable to a viewer.
  */
 
+import {
+  paddedFaceRect as paddedFaceRectImpl,
+  blurRadiusPx as blurRadiusPxImpl
+} from '../../shared/mathUtils';
+
 // Padding added around the detected face rect before blurring. The
 // BlazeFace detector returns a box on the facial features; a small
 // expansion catches forehead and chin that the detector clips. Keep
@@ -87,33 +92,14 @@ function getFeatherMask(w: number, h: number, featherPx: number): HTMLCanvasElem
   return maskCache;
 }
 
-/** Padded, clamped crop in source-video pixel space. */
+/** Padded, clamped crop in source-video pixel space. Defaults `padFrac` to `FACE_BOX_PAD_FRAC`. */
 export function paddedFaceRect(rect: Box, vw: number, vh: number, padFrac = FACE_BOX_PAD_FRAC): Box {
-  const cx = rect.x + rect.width / 2;
-  const cy = rect.y + rect.height / 2;
-  const bw = rect.width * (1 + padFrac * 2);
-  const bh = rect.height * (1 + padFrac * 2);
-  const x1 = Math.max(0, cx - bw / 2);
-  const y1 = Math.max(0, cy - bh / 2);
-  const x2 = Math.min(vw, cx + bw / 2);
-  const y2 = Math.min(vh, cy + bh / 2);
-  return { x: x1, y: y1, width: Math.max(1, x2 - x1), height: Math.max(1, y2 - y1) };
+  return paddedFaceRectImpl(rect, vw, vh, padFrac);
 }
 
-/**
- * Map UI slider (12–120) + box size → CSS blur() radius in px.
- *
- * Mirrors the web-app Basic Face Blur numbers: for a typical padded
- * face crop (~300 px on the long side) the slider produces a 6–40 px
- * radius, which is the same range the server-side `boxblur` filter
- * uses with its default of 20. Scaling by `boxLongSide` keeps the
- * blur visually proportional when different face sizes appear in the
- * same video.
- */
+/** CSS `blur(Npx)` radius for the face-blur box. See `mathUtils.blurRadiusPx` for details. */
 export function blurRadiusPx(blurStrength: number, boxLongSide: number): number {
-  const t = Math.max(12, Math.min(120, blurStrength));
-  const px = (t * boxLongSide) / 700;
-  return Math.max(6, Math.min(56, px));
+  return blurRadiusPxImpl(blurStrength, boxLongSide);
 }
 
 /**

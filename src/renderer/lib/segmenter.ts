@@ -40,6 +40,7 @@ import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
 import { refineMaskGL } from './maskRefineGL';
 import { EFFECT_FILTERS, type WebcamEffect } from '../../shared/types';
+import { centerCrop } from '../../shared/mathUtils';
 
 export type SegMode = 'none' | 'blur' | 'image';
 export type SegBackendId = 'selfie' | 'multiclass' | 'rvm';
@@ -599,24 +600,6 @@ function legacyScratch(): ComposeScratch {
  *     then matte the live video through it and place a background
  *     behind.
  */
-// Compute a centred crop rectangle for a given zoom and pan offsets.
-// The crop preserves the SOURCE's aspect ratio (sw/z × sh/z) so the
-// face isn't horizontally stretched when drawn back into a non-square
-// output canvas. Offsets are -0.5..+0.5 and shift the crop window
-// inside the source. Returns rect in the source's pixel space.
-function centerCrop(sw: number, sh: number, zoom: number, offX: number, offY: number) {
-  const z = Math.max(1, zoom || 1);
-  const cropW = sw / z;
-  const cropH = sh / z;
-  const maxPanX = (sw - cropW) / 2;
-  const maxPanY = (sh - cropH) / 2;
-  const ox = Math.max(-0.5, Math.min(0.5, offX || 0));
-  const oy = Math.max(-0.5, Math.min(0.5, offY || 0));
-  const sx = Math.max(0, Math.min(sw - cropW, maxPanX + ox * maxPanX * 2));
-  const sy = Math.max(0, Math.min(sh - cropH, maxPanY + oy * maxPanY * 2));
-  return { sx, sy, sw: cropW, sh: cropH };
-}
-
 export function composeSegmented(
   video: HTMLVideoElement,
   mask: HTMLCanvasElement | null,

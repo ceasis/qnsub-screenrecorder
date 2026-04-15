@@ -1250,6 +1250,15 @@ export default function RecorderTab() {
             <Help>Core webcam framing plus the background scene. Shape, size, and zoom control how your face is framed in the floating bubble and in the recording. Mode + samples + effect control what goes behind you. Everything here applies to both the live preview and the final video.</Help>
           </h2>
           <div className="row two-col">
+            <label className="row-label">Webcam overlay <Help>Master switch for the whole face-cam pipeline. When enabled, a small floating webcam window shows on your desktop immediately. You can drag it anywhere and click the 3-dot menu on it to configure. Turn off to record the screen without any face-cam.</Help></label>
+            <div className="row-ctrl">
+              <label className="check inline">
+                <input type="checkbox" checked={includeWebcam} onChange={(e) => setIncludeWebcam(e.target.checked)} />
+                Include me on screen
+              </label>
+            </div>
+          </div>
+          <div className="row two-col">
             <label className="row-label">Shape <Help>Frame for the webcam feed: circle, rectangle, squircle (rounded square), hexagon, diamond, heart, or star.</Help></label>
             <div className="row-ctrl">
               {SHAPES.map((sh) => (
@@ -1895,17 +1904,16 @@ export default function RecorderTab() {
         <section className="panel">
           <h2>
             <span className="step">6</span> Webcam
-            <Help>Overlay a live camera feed on top of your screen. A floating bubble appears on your desktop so you can see yourself, and it's baked into the final video at the position you pick.</Help>
+            <Help>Overlay a live camera feed on top of your screen. A floating bubble appears on your desktop so you can see yourself, and it's baked into the final video at the position you pick. The master on/off switch lives at the top of step 1 — Web Cam Basic Settings.</Help>
           </h2>
-          <div className="row two-col">
-            <label className="row-label">Webcam overlay <Help>When enabled, a small floating webcam window shows on your desktop immediately. You can drag it anywhere and click the 3-dot menu on it to configure.</Help></label>
-            <div className="row-ctrl">
-              <label className="check inline">
-                <input type="checkbox" checked={includeWebcam} onChange={(e) => setIncludeWebcam(e.target.checked)} />
-                Include me on screen
-              </label>
+          {!includeWebcam && (
+            <div className="row two-col">
+              <span className="row-label" />
+              <p className="hint row-ctrl">
+                Enable <b>Webcam overlay</b> at the top of step 1 to access camera, segmentation, auto-center and face light.
+              </p>
             </div>
-          </div>
+          )}
           {includeWebcam && (
             <>
               <div className="row two-col">
