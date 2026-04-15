@@ -12,6 +12,7 @@ import type {
 import { ANNOTATION_COLORS, ANNOTATION_PRESETS, ARROW_STYLES, COLOR_HEX, EFFECTS, SHAPES as ALL_SHAPES } from '../../shared/types';
 import { Compositor, WebcamSettings, type TextOverlay, type TextOverlayEffect } from '../lib/compositor';
 import { getMicStream, getWebcamStream, listCameras, listMics, listSpeakers } from '../lib/webcam';
+import { BG_MUSIC_PRESETS, BgMusicPlayer, bgMusicPresetLabel, type BgMusicPreset } from '../lib/bgMusic';
 import { getScreenStream } from '../lib/screen';
 import { Recorder as MR, mixAudioStreams } from '../lib/mediaRecorder';
 import {
@@ -206,6 +207,59 @@ const EFFECT_ICONS: Record<WebcamEffect, React.ReactNode> = {
   dramatic: <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2 14L8 2l6 12z" /></svg>
 };
 
+// Emoji glyphs for the voice-changer preset chips. Keeps the Audio
+// panel row visually scannable instead of a grey wall of text.
+const BG_MUSIC_ICONS: Record<BgMusicPreset, string> = {
+  'off':          '🔕',
+  'ambient':      '🌌',
+  'lofi':         '📼',
+  'piano-arp':    '🎹',
+  'synthwave':    '🌆',
+  'chiptune':     '🕹️',
+  'cinematic':    '🎬',
+  'jazz-brush':   '🎷',
+  'dream-pad':    '☁️',
+  'upbeat-pop':   '🎉',
+  'deep-focus':   '🧘',
+  'epic-drums':   '🥁',
+  'elevator':     '🛗',
+  'ukulele':      '🎶',
+  'chillhop':     '🎧',
+  'suspense':     '🕵️',
+  'canon-d':      '🎻',
+  'fur-elise':    '🎼',
+  'moonlight':    '🌙',
+  'gymnopedie-1': '🏛️',
+  'clair-de-lune':'🌕',
+  'nocturne-9-2': '🌃',
+  'ode-to-joy':   '🎺',
+  'prelude-c':    '⛪',
+  'eine-kleine':  '🎻',
+  'air-g-string': '🎶',
+  'turkish-march':'🥁',
+  'spring-vivaldi':'🌸'
+};
+
+const VOICE_PRESET_ICONS: Record<VoicePreset, string> = {
+  off:        '🎤',
+  deep:       '🔉',
+  monster:    '👹',
+  demon:      '😈',
+  high:       '🐿️',
+  helium:     '🎈',
+  radio:      '📻',
+  telephone:  '📞',
+  megaphone:  '📢',
+  walkie:     '📡',
+  robot:      '🤖',
+  alien:      '👽',
+  ghost:      '👻',
+  whisper:    '🤫',
+  underwater: '🌊',
+  vintage:    '💿',
+  custom:     '🎛️'
+};
+
 export default function RecorderTab() {
   // One-shot localStorage maintenance on mount.
   //
@@ -267,6 +321,12 @@ export default function RecorderTab() {
   // so the Audio panel has everything in one place.
   const [speakerId, setSpeakerId] = usePersistedState<string | undefined>('rec.speakerId', undefined);
   const [speakers, setSpeakers] = useState<MediaDeviceInfo[]>([]);
+  // Background music preset + volume. When a preset is picked, a
+  // BgMusicPlayer runs continuously (preview via speakers, baked
+  // into the recording via a MediaStream) until the user picks
+  // 'off' or leaves the Recorder tab.
+  const [bgMusicPreset, setBgMusicPreset] = usePersistedState<BgMusicPreset>('rec.bgMusicPreset', 'off');
+  const [bgMusicVolume, setBgMusicVolume] = usePersistedState<number>('rec.bgMusicVolume', 0.4);
   const [includeSystemAudio, setIncludeSystemAudio] = usePersistedState<boolean>('rec.sysAudio', true);
   const [includeMic, setIncludeMic] = usePersistedState<boolean>('rec.mic', true);
   const [voicePreset, setVoicePreset] = usePersistedState<VoicePreset>('rec.voicePreset', 'off');
@@ -477,6 +537,17 @@ export default function RecorderTab() {
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const voiceChangerRef = useRef<VoiceChangerHandle | null>(null);
+  // Live voice-changer preview used when the user is idle and picks
+  // a preset — they hear their own voice through the chosen speaker
+  // so they can dial in the effect without having to start a
+  // recording first. Torn down the moment recording starts so the
+  // recorder's own voice changer can claim the mic.
+  const voicePreviewRef = useRef<{
+    stream: MediaStream;
+    vc: VoiceChangerHandle;
+    audio: HTMLAudioElement;
+  } | null>(null);
+  const bgMusicPlayerRef = useRef<BgMusicPlayer | null>(null);
   // Streaming-finalize session id (returned from main when ffmpeg is
   // ready). Null means we're using the legacy buffered save path.
   const streamSessionRef = useRef<string | null>(null);
@@ -701,7 +772,17 @@ export default function RecorderTab() {
         }
       }
 
-      // 3. Mic stream (optional)
+      // 3. Mic stream (optional). Tear down the idle voice-preview
+      //    first so we don't hold two concurrent captures on the
+      //    same device while this new one opens.
+      if (voicePreviewRef.current) {
+        const p = voicePreviewRef.current;
+        try { p.audio.pause(); } catch {}
+        try { p.audio.srcObject = null; } catch {}
+        try { p.vc.close(); } catch {}
+        try { p.stream.getTracks().forEach((t) => t.stop()); } catch {}
+        voicePreviewRef.current = null;
+      }
       let micStream: MediaStream | null = null;
       if (includeMic) {
         try {
@@ -786,6 +867,13 @@ export default function RecorderTab() {
         const vc = createVoiceChanger(micStream, { preset: voicePreset, pitch: voicePitch });
         voiceChangerRef.current = vc;
         audioStreams.push(vc.stream);
+      }
+      // Background music mix (same player that's been playing live
+      // through the speakers — we just route its MediaStream into
+      // the recorder so the recording captures exactly what the
+      // user has been monitoring).
+      if (bgMusicPlayerRef.current && bgMusicPreset !== 'off') {
+        audioStreams.push(bgMusicPlayerRef.current.stream);
       }
       const mixed = audioStreams.length > 0 ? mixAudioStreams(audioStreams) : null;
 
@@ -895,7 +983,11 @@ export default function RecorderTab() {
       streamSessionRef.current = null;
       let savedPath: string | undefined;
       if (sid && !streamFailedRef.current) {
-        const res = await window.api.streamStop(sid, openFolderAfter);
+        // Never open the OS file browser after a save — the app
+        // auto-switches to the Player tab and starts playback, so
+        // popping a second window is redundant and interrupts the
+        // user's flow.
+        const res = await window.api.streamStop(sid, false);
         if (res.ok && res.path) {
           savedPath = res.path;
         } else {
@@ -911,7 +1003,7 @@ export default function RecorderTab() {
 
       if (!savedPath) {
         const buf = await blob.arrayBuffer();
-        const res = await window.api.saveRecording(buf, saveFolder, openFolderAfter);
+        const res = await window.api.saveRecording(buf, saveFolder, false);
         savedPath = res.path;
       }
       setStatus('Saved: ' + savedPath);
@@ -1196,11 +1288,114 @@ export default function RecorderTab() {
   // custom pitch changes. `setConfig` tears down the old FX nodes and
   // rewires new ones inside the same AudioContext, so the recorder's
   // MediaRecorder keeps feeding from the same track without a
-  // dropout. Only runs while a recording is active (voiceChangerRef
-  // is null during idle).
+  // dropout. Runs against both the recording voice changer AND the
+  // idle preview one — whichever exists.
   useEffect(() => {
     voiceChangerRef.current?.setConfig({ preset: voicePreset, pitch: voicePitch });
+    voicePreviewRef.current?.vc.setConfig({ preset: voicePreset, pitch: voicePitch });
   }, [voicePreset, voicePitch]);
+
+  // One-shot migration: if the persisted bgMusicPreset value is no
+  // longer in the current BG_MUSIC_PRESETS list (e.g. the user had
+  // an old preset ID like 'rfiy' that's been replaced by
+  // 'piano-flow'), reset to 'off' so the selection chip row and the
+  // player stay in a known-good state.
+  useEffect(() => {
+    if (!BG_MUSIC_PRESETS.includes(bgMusicPreset)) {
+      setBgMusicPreset('off');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Background music player lifecycle. One shared player spins up
+  // the first time the user picks a preset and stays alive for the
+  // whole session — its loop restarts are seamless and keeping a
+  // single AudioContext avoids the 100ms+ click you'd get from
+  // tearing down + rebuilding every time the preset changes.
+  useEffect(() => {
+    if (bgMusicPreset === 'off') {
+      // Keep the player alive but silence the loop so switching
+      // back on is instant (no AudioContext re-init).
+      bgMusicPlayerRef.current?.setPreset('off');
+      return;
+    }
+    if (!bgMusicPlayerRef.current) {
+      bgMusicPlayerRef.current = new BgMusicPlayer();
+    }
+    bgMusicPlayerRef.current.setVolume(bgMusicVolume);
+    bgMusicPlayerRef.current.setPreset(bgMusicPreset);
+  }, [bgMusicPreset]);
+
+  // Push volume changes to the running player without rebuilding.
+  useEffect(() => {
+    bgMusicPlayerRef.current?.setVolume(bgMusicVolume);
+  }, [bgMusicVolume]);
+
+  // Tear down the player on unmount.
+  useEffect(() => {
+    return () => {
+      bgMusicPlayerRef.current?.close();
+      bgMusicPlayerRef.current = null;
+    };
+  }, []);
+
+  // Live voice preview while idle. Runs whenever the user has mic
+  // enabled and picks a non-"off" preset, so they can hear the
+  // effect before starting a recording. Stops the moment recording
+  // starts (the recorder builds its own voice changer over the
+  // same device and some mic drivers refuse a second concurrent
+  // capture). NOTE: monitors through the chosen speaker, so the
+  // user should wear headphones to avoid a feedback loop.
+  useEffect(() => {
+    const shouldRun = includeMic && voicePreset !== 'off' && recState === 'idle';
+
+    const teardown = () => {
+      const p = voicePreviewRef.current;
+      if (!p) return;
+      try { p.audio.pause(); } catch {}
+      try { p.audio.srcObject = null; } catch {}
+      try { p.vc.close(); } catch {}
+      try { p.stream.getTracks().forEach((t) => t.stop()); } catch {}
+      voicePreviewRef.current = null;
+    };
+
+    if (!shouldRun) {
+      teardown();
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      teardown();
+      try {
+        const stream = await getMicStream(micId);
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        const vc = createVoiceChanger(stream, { preset: voicePreset, pitch: voicePitch });
+        const audio = new Audio();
+        audio.srcObject = vc.stream;
+        audio.autoplay = true;
+        const anyAudio = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+        if (speakerId && typeof anyAudio.setSinkId === 'function') {
+          anyAudio.setSinkId(speakerId).catch(() => {});
+        }
+        await audio.play().catch(() => {});
+        voicePreviewRef.current = { stream, vc, audio };
+      } catch {
+        // If the mic is busy or permission was denied, silently skip
+        // preview — the user can still start a real recording, which
+        // re-acquires the device via the normal start flow.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      teardown();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeMic, voicePreset, recState, micId, speakerId]);
 
   // Receive config changes made from the floating bubble's 3-dot menu.
   useEffect(() => {
@@ -1981,16 +2176,55 @@ export default function RecorderTab() {
               </select>
             </div>
           </div>
+          <div className="row two-col">
+            <label className="row-label">Background music <Help>Loops a short synthesized track behind your recording. The loop is generated live in Web Audio — no files to download — and is baked into the final MP4. Tap a preset to preview it through your speakers; tap Off to silence it.</Help></label>
+            <div className="row-ctrl" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {BG_MUSIC_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={bgMusicPreset === p ? 'chip sel' : 'chip'}
+                  onClick={() => setBgMusicPreset(p)}
+                  title={bgMusicPresetLabel(p)}
+                >
+                  <span className="chip-icon" aria-hidden>{BG_MUSIC_ICONS[p]}</span>
+                  {bgMusicPresetLabel(p)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {bgMusicPreset !== 'off' && (
+            <div className="row two-col">
+              <label className="row-label">Music volume {Math.round(bgMusicVolume * 100)}% <Help>How loud the background loop plays relative to your mic and system audio. Lower values keep it underneath narration; higher values let it take the foreground.</Help></label>
+              <div className="row-ctrl">
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={bgMusicVolume}
+                  onChange={(e) => setBgMusicVolume(+e.target.value)}
+                />
+              </div>
+            </div>
+          )}
 
           {includeMic && (
             <div className="row two-col">
-              <label className="row-label">Voice changer <Help>Process the mic through a Web Audio pitch-shifter and optional effect chain before recording. "Custom pitch" unlocks the slider so you can dial the amount yourself. Applied at Start; change and restart to preview a different preset.</Help></label>
-              <div className="row-ctrl">
-                <select value={voicePreset} onChange={(e) => setVoicePreset(e.target.value as VoicePreset)}>
-                  {VOICE_PRESETS.map((p) => (
-                    <option key={p} value={p}>{voicePresetLabel(p)}</option>
-                  ))}
-                </select>
+              <label className="row-label">Voice changer <Help>Tap a preset to hear it live through the chosen speaker before you record (headphones recommended so the mic doesn't pick up the monitor). Pick Custom to unlock the pitch slider below. The preset is baked into the recording at Start.</Help></label>
+              <div className="row-ctrl" style={{ flexWrap: 'wrap', gap: 6 }}>
+                {VOICE_PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={voicePreset === p ? 'chip sel' : 'chip'}
+                    onClick={() => setVoicePreset(p)}
+                    title={voicePresetLabel(p)}
+                  >
+                    <span className="chip-icon" aria-hidden>{VOICE_PRESET_ICONS[p]}</span>
+                    {voicePresetLabel(p)}
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -2249,12 +2483,9 @@ export default function RecorderTab() {
             </div>
           </div>
           <div className="row two-col">
-            <label className="row-label">After recording <Help>When enabled, the saved file is revealed in your OS file browser as soon as the recording finishes. Turn off if you'd rather keep recording back-to-back without windows popping up.</Help></label>
+            <label className="row-label">After recording <Help>QNSub auto-switches to the Player tab and plays the clip back as soon as the recording finishes — no more file-explorer windows popping up mid-flow.</Help></label>
             <div className="row-ctrl">
-              <label className="check inline">
-                <input type="checkbox" checked={openFolderAfter} onChange={(e) => setOpenFolderAfter(e.target.checked)} />
-                Open the folder when done
-              </label>
+              <span className="hint">Auto-opens in the Player tab.</span>
             </div>
           </div>
           <div className="row two-col">

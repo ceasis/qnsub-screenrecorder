@@ -48,5 +48,9 @@ contextBridge.exposeInMainWorld('webcamApi', {
   ctrlStop: () => ipcRenderer.send('control:command', 'stop'),
 
   // Immediately quit the entire app from the floating HUD.
-  quitApp: () => ipcRenderer.invoke('app:quit')
+  quitApp: () => ipcRenderer.invoke('app:quit'),
+
+  // Bring the main configuration window back into focus from the
+  // floating webcam toolbar.
+  showMainWindow: () => ipcRenderer.invoke('app:show-main')
 });

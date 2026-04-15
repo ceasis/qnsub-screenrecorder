@@ -20,16 +20,24 @@ const SECTIONS: Section[] = [
     body: (
       <>
         <p>
-          QNSub Studio is a screen recorder + face-cam + post-production toolbox.
-          Pick a tab at the top: <b>Screen Recorder</b> for capturing,
-          <b> Face Blur</b> for redacting an existing video, or <b>Editor</b>{' '}
-          (coming soon) for trimming.
+          QNSub Studio is a screen recorder + face-cam studio + post-production
+          toolbox. Pick a tab at the top:
         </p>
+        <ul>
+          <li><b>Screen Recorder</b> — capture your screen with webcam, audio, voice changer, BG music, annotations, and a floating mini HUD.</li>
+          <li><b>Player</b> — browse, preview, trim, reveal, and delete recordings saved on disk.</li>
+          <li><b>Face Blur</b> — open an existing video and automatically blur faces frame-by-frame for redaction.</li>
+          <li><b>Editor</b> — coming soon.</li>
+        </ul>
         <p>
           When the Recorder tab is active, three companion windows can appear:
-          the <b>floating face-cam bubble</b>, the <b>idiot board</b> (your
-          private teleprompter), and any <b>annotation overlay</b> you draw
-          while recording. Switching tabs auto-hides the face-cam.
+          the <b>floating face-cam bubble</b> (with embedded recording HUD),
+          the <b>idiot board</b> (your private teleprompter), and any
+          <b> annotation overlay</b> you draw while recording. Switching tabs
+          auto-hides the face-cam so it doesn't hover over other UI.
+        </p>
+        <p className="muted">
+          Everything runs locally — no accounts, no telemetry, no cloud.
         </p>
       </>
     )
@@ -63,11 +71,14 @@ const SECTIONS: Section[] = [
           <b>Computer audio</b> records what's playing through your speakers
           (loopback on Windows, screen-recording permission on macOS).
           <b> Microphone</b> records your voice with noise suppression and
-          echo cancellation enabled.
+          echo cancellation enabled. Both feed into a single mixed track
+          alongside any background music.
         </p>
+        <h4>Voice changer</h4>
         <p>
-          <b>Voice changer</b> runs the mic through a Web Audio pitch shifter
-          + effect chain before recording:
+          Runs the mic through a Web Audio pitch shifter (classic "Jungle"
+          delay-line technique) + optional effect chain before the recorder
+          sees it. The processed voice is what lands in the MP4.
         </p>
         <ul>
           <li><b>Off</b> — pass-through, zero latency.</li>
@@ -78,15 +89,61 @@ const SECTIONS: Section[] = [
           <li><b>Custom pitch</b> — slider unlocks for ±1 octave control.</li>
         </ul>
         <p className="muted">
-          The effect is applied at <b>Start</b>; change preset and re-start
+          The preset is applied at <b>Start</b>; change preset and re-start
           to preview a different one.
         </p>
       </>
     )
   },
   {
+    id: 'bg-music',
+    title: '3. Background music',
+    icon: <span>🎵</span>,
+    body: (
+      <>
+        <p>
+          Procedurally-synthesised background music generated at runtime from
+          pure Web Audio primitives — no audio files ship with the app, so
+          nothing to license, download, or worry about copyright on. Each
+          preset renders a short loop into an AudioBuffer and plays it
+          seamlessly forever while recording.
+        </p>
+        <p>
+          The player outputs to your speakers (for preview) AND into a
+          MediaStream the recorder mixes into the final track, so what you
+          preview is exactly what lands in the MP4. Volume slider is independent
+          of system volume.
+        </p>
+        <h4>Classical pieces (public domain)</h4>
+        <ul>
+          <li><b>Canon in D</b> — Pachelbel, c.1680. Full 8-bar progression with walking bass, chord pad, and sustained top-line melody.</li>
+          <li><b>Für Elise</b> — Beethoven's WoO 59 opening motif.</li>
+          <li><b>Moonlight Sonata</b> — Beethoven Op. 27 No. 2, 1st mvt triplet arpeggio over C#m bass.</li>
+          <li><b>Gymnopédie No. 1</b> — Satie, 1888, 3/4 oom-pah-pah with the descending D-major melody.</li>
+          <li><b>Clair de Lune</b> — Debussy, Suite bergamasque 3rd mvt.</li>
+          <li><b>Nocturne Op. 9 No. 2</b> — Chopin, Eb major dotted-rhythm melody over arpeggiated bass.</li>
+          <li><b>Ode to Joy</b> — Beethoven Symphony 9, 4th mvt theme.</li>
+          <li><b>Prelude in C</b> — Bach BWV 846 (WTC Book I), continuous broken-chord arpeggios.</li>
+          <li><b>Eine kleine Nachtmusik</b> — Mozart K.525 opening call and answer.</li>
+          <li><b>Air on the G String</b> — Bach Orchestral Suite 3, BWV 1068.</li>
+          <li><b>Turkish March</b> — Mozart's Rondo alla turca from K.331.</li>
+          <li><b>Spring (Vivaldi)</b> — Four Seasons Op. 8 No. 1, opening Allegro ritornello.</li>
+        </ul>
+        <h4>Genre presets</h4>
+        <ul>
+          <li><b>Ambient Drone</b>, <b>Lo-fi Beat</b>, <b>Piano Arp</b>, <b>Synthwave</b>, <b>Chiptune</b>, <b>Cinematic</b>, <b>Jazz Brush</b>, <b>Dream Pad</b>, <b>Upbeat Pop</b>, <b>Deep Focus</b>, <b>Epic Drums</b>, <b>Elevator</b>, <b>Ukulele</b>, <b>Chillhop</b>, <b>Suspense</b>.</li>
+        </ul>
+        <p className="muted">
+          Switching presets while idle previews them instantly through your
+          speakers. The switch is seamless during recording too — no dropout,
+          no re-init click.
+        </p>
+      </>
+    )
+  },
+  {
     id: 'webcam',
-    title: '3. Webcam (face-cam bubble)',
+    title: '4. Webcam (face-cam bubble)',
     icon: <span>📸</span>,
     body: (
       <>
@@ -116,25 +173,33 @@ const SECTIONS: Section[] = [
             you drift toward the edge of the camera frame.</li>
           <li><b>Face light</b> applies a soft fill-light filter
             (brightness + warmth + saturation) on top of any color effect.
-            Tune via the slider for the right intensity.</li>
-          <li><b>Auto relocate face cam</b> — the bubble slides sideways
-            out of your cursor's way and glides back when the cursor
-            clears off.</li>
-          <li><b>Auto reduce opacity of face cam</b> — the bubble fades
-            translucent when the cursor is near it and returns to full
-            opacity when you move away. Both auto-options can be
-            toggled independently.</li>
-          <li><b>Backgrounds</b> — choose blur, a built-in scene, or
-            upload your own image. MediaPipe Selfie Segmentation handles
-            the matting; you can stack additional blur or color filters
-            on the background only.</li>
+            Tune via the slider for the right intensity. Disabled
+            automatically when Auto-center is on.</li>
+          <li><b>Face Blur</b> — Gaussian blur applied only to the face
+            layer, for anonymizing yourself on the fly without touching
+            the background.</li>
+          <li><b>Auto reduce opacity of face cam</b> — toggled in the main
+            panel. When on, the bubble fades translucent whenever your
+            cursor is over or near it, and returns to full opacity when
+            the cursor moves away. Useful when the bubble is in the
+            corner you need to click through.</li>
+          <li><b>Backgrounds</b> — choose <i>Off</i> (raw camera), <i>Blur</i>
+            (blur your real room), or <i>Image</i> (replace with a
+            built-in scene or your own upload). Matting uses MediaPipe
+            Selfie Segmentation, Multiclass Segmenter, or RVM Video
+            Matting depending on which backend you pick (Auto picks the
+            best your machine can run).</li>
+          <li><b>Background-only effects</b> — separate Background Effect,
+            Background Blur, and Background Zoom sliders let you tint/blur/
+            push into the replacement scene without touching the face layer.
+            Pair a grayscale face with a vivid background, etc.</li>
         </ul>
       </>
     )
   },
   {
     id: 'recording-fx',
-    title: '4. Recording FX',
+    title: '5. Recording FX',
     icon: <span>✨</span>,
     body: (
       <>
@@ -160,7 +225,7 @@ const SECTIONS: Section[] = [
   },
   {
     id: 'save-to',
-    title: '5. Save to',
+    title: '6. Save to',
     icon: <span>💾</span>,
     body: (
       <>
@@ -219,6 +284,39 @@ const SECTIONS: Section[] = [
           and blurs them. Used for redacting bystanders before sharing a
           recording. The output is a fresh MP4 — your source file is left
           alone.
+        </p>
+      </>
+    )
+  },
+  {
+    id: 'player',
+    title: 'Player tab',
+    icon: <span>▶️</span>,
+    body: (
+      <>
+        <p>
+          Browse and play back the recordings you've saved. The Player tab
+          scans your save folder for <code>ScreenRecording_*</code>
+          directories and lists every MP4 it finds. Click a recording to
+          preview it in the built-in video player.
+        </p>
+        <h4>Per-recording actions</h4>
+        <ul>
+          <li><b>Play / scrub</b> — standard HTML5 video controls with the
+            full-length seek bar.</li>
+          <li><b>Trim</b> — pick a start and end time and write a new MP4
+            containing only that range. Uses an ffmpeg stream-copy cut,
+            so the trim happens in seconds without re-encoding (the cut
+            snaps to the nearest keyframe at or before your start point —
+            standard fast-trim behaviour).</li>
+          <li><b>Reveal in folder</b> — open the recording's containing
+            folder in your OS file browser.</li>
+          <li><b>Delete</b> — send the recording to the OS trash.</li>
+        </ul>
+        <p className="muted">
+          When you finish a new recording in the Recorder tab, the app
+          automatically jumps to the Player tab and pre-selects the file
+          you just saved so you can watch it immediately.
         </p>
       </>
     )
@@ -501,18 +599,43 @@ const SECTIONS: Section[] = [
     icon: <span>💡</span>,
     body: (
       <>
+        <h4>Shortcuts &amp; gestures</h4>
         <ul>
-          <li>If the face-cam doesn't appear, your camera may be in use by
-            another app. Close it (Zoom, Teams, browser tab) and toggle
-            "Include me on screen" off and back on.</li>
-          <li>On Windows, computer audio uses Electron's loopback and
-            should always work. On macOS, grant <b>Screen Recording</b>
-            permission in System Settings.</li>
-          <li>If a recording finishes with strange audio sync, check the
-            voice changer preset — pure pass-through ("Off") has zero
-            latency; presets add a small Web Audio buffer.</li>
-          <li>The DevTools button in the footer opens Chromium DevTools
-            for the main window — only useful for debugging.</li>
+          <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> — global pause/resume
+            toggle, works even when the main window isn't focused.</li>
+          <li>Hold <kbd>Ctrl</kbd> and drag while recording — draws an
+            annotation arrow/line/box/circle/highlight at your cursor.</li>
+          <li>Mouse-wheel over the floating face-cam bubble — zoom the camera
+            in/out without opening the config panel.</li>
+          <li>Drag the centre handle inside the face-cam bubble — reposition
+            your face <i>inside</i> the shape instead of moving the window.</li>
+          <li><kbd>Esc</kbd> — closes the Help modal, cancels a region selection.</li>
+        </ul>
+        <h4>Common fixes</h4>
+        <ul>
+          <li><b>Face-cam doesn't appear</b> — your camera may be in use by
+            another app. Close it (Zoom, Teams, browser tab) and toggle the
+            "Webcam overlay" checkbox off and back on at the top of step 1.</li>
+          <li><b>System audio missing</b> — on Windows it uses Electron's
+            loopback automatically. On macOS, grant <b>Screen Recording</b>
+            permission in System Settings and relaunch the app.</li>
+          <li><b>Audio feels out of sync</b> — check the voice changer preset.
+            "Off" has zero latency; other presets add a small Web Audio
+            buffer (~10-20ms) that's usually imperceptible but can compound
+            with OS-level latency on some mics.</li>
+          <li><b>Face-cam drifts near the edge of the camera frame</b> —
+            Auto-center uses a confidence gate and heavy smoothing so it
+            holds the previous framing instead of chasing a half-clipped
+            face. Step back into frame and it resumes automatically.</li>
+          <li><b>Idiot board or control HUD appears in the recording</b> —
+            they shouldn't (both are marked with content protection). If
+            you do see them, update your OS (older macOS / Linux Wayland
+            sessions sometimes ignore content protection).</li>
+          <li><b>Persisted settings don't apply after update</b> — click the
+            corresponding chip or checkbox once to re-save. Some removed
+            presets get auto-migrated to "Off" on mount.</li>
+          <li><b>DevTools</b> — the footer button opens Chromium DevTools
+            for the main window; only useful for debugging.</li>
         </ul>
       </>
     )

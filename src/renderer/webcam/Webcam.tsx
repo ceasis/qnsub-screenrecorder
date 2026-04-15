@@ -523,7 +523,9 @@ export default function WebcamOverlay() {
       </div>}
 
       {/* 3-dots toolbar — moved beneath the bubble. Clicking opens the
-          config panel below it (or re-enables the camera when off). */}
+          config panel below it (or re-enables the camera when off).
+          A maximize button sits to the right so the user can pop the
+          main configuration window back into focus without alt-tabbing. */}
       <div className="toolbar toolbar-bottom">
         <button
           className="dots"
@@ -538,6 +540,19 @@ export default function WebcamOverlay() {
           }}
         >
           <span /><span /><span />
+        </button>
+        <button
+          className="show-main"
+          aria-label="Open main window"
+          title="Open the main QNSub Studio window"
+          onClick={() => (window as any).webcamApi?.showMainWindow?.()}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 9V5a1 1 0 0 1 1-1h4" />
+            <path d="M20 9V5a1 1 0 0 0-1-1h-4" />
+            <path d="M4 15v4a1 1 0 0 0 1 1h4" />
+            <path d="M20 15v4a1 1 0 0 1-1 1h-4" />
+          </svg>
         </button>
       </div>
 

@@ -60,7 +60,6 @@ html, body, #root {
 
 /* ----- Tabs ----- */
 .tabs {
-  margin-left: auto;
   display: flex;
   gap: 4px;
   background: var(--panel-2);
@@ -108,7 +107,6 @@ html, body, #root {
   border-color: rgba(255, 90, 90, 0.6);
 }
 .tab.tab-coffee {
-  margin-left: auto;
   color: #ffb86b;
   border-color: rgba(255, 184, 107, 0.45);
   background: rgba(255, 184, 107, 0.10);
@@ -283,9 +281,14 @@ html, body, #root {
   background: var(--panel);
 }
 
-/* ----- Top bar ----- */
+/* ----- Top bar -----
+   Three-column grid keeps the main tabs visually centred regardless
+   of how wide the QNSub logo or the coffee/help/quit actions grow.
+   Left and right tracks are 1fr so the middle stays in the true
+   centre of the viewport, not just between its siblings. */
 header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 16px;
   padding: 14px 24px;
@@ -294,6 +297,23 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+header h1 {
+  justify-self: start;
+}
+.main-tabs {
+  justify-self: center;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  min-width: 620px;
+  gap: 4px;
+}
+.main-tabs .tab {
+  justify-content: center;
+}
+.action-tabs {
+  justify-self: end;
 }
 header h1 {
   font-size: 26px;

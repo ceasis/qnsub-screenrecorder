@@ -96,23 +96,36 @@ The `out/` directory contains the installer + supporting files. `electron-builde
 - **Source picker** — desktop, window, or **drag-a-region** (live cursor preview at ~10fps before you hit Start).
 - **3-2-1 countdown** before recording begins.
 - **Pause / resume** via global shortcut `Ctrl + Shift + P`.
-- **System audio** + **microphone**, mixed into the final track.
-- **Voice changer** with real-time pitch shift (Web Audio "Jungle" technique) and presets:
-  - Off, Deep (villain), High (chipmunk), Radio (tinny), Robot (metallic), or **Custom pitch** (±1 octave slider).
+- **Streaming recorder pipeline** — the MediaRecorder's WebM chunks are piped into a long-running ffmpeg process in real time, so by the time you hit Stop most of the H.264 encode is already done. Hardware encoders (NVENC / QuickSync / AMF / VideoToolbox) are auto-detected with a `libx264` software fallback.
+- **System audio** + **microphone**, mixed into the final track along with any background music.
+- **Voice changer** — real-time mic pitch shift via a Web Audio "Jungle" delay-line pipeline, plus preset effect chains:
+  - **Off** (pass-through, zero latency), **Deep (villain)**, **High (chipmunk)**, **Radio (tinny)**, **Robot (metallic)**, or **Custom pitch** with a ±1 octave slider.
+- **Background music** — procedurally synthesised at runtime from Web Audio primitives, no audio files bundled or streamed. The player outputs to your speakers for preview AND into a MediaStream the recorder mixes into the final track, so what you preview is what lands in the MP4.
+  - **Classical (public domain)**: Canon in D, Für Elise, Moonlight Sonata, Gymnopédie No. 1, Clair de Lune, Nocturne Op. 9 No. 2, Ode to Joy, Bach Prelude in C, Eine kleine Nachtmusik, Air on the G String, Turkish March, Spring (Vivaldi).
+  - **Genres**: Ambient Drone, Lo-fi Beat, Piano Arp, Synthwave, Chiptune, Cinematic, Jazz Brush, Dream Pad, Upbeat Pop, Deep Focus, Epic Drums, Elevator, Ukulele, Chillhop, Suspense.
 - **Floating face-cam bubble** with a built-in HUD (timer + Start/Pause/Stop + a red-X **Quit App** button) — content-protected so it doesn't appear in the recording.
   - 8 shapes (circle, rect, wide, squircle, hexagon, diamond, heart, star), 3 sizes.
   - Drag the centre handle to reposition your face inside the shape; click anywhere else to drag the whole window.
   - **±** zoom buttons + mouse-wheel zoom directly over the bubble.
-  - **Auto-center** tracks the segmentation-mask centroid with confidence-gated, jitter-free smoothing.
+  - **Auto-center** tracks the segmentation-mask centroid with confidence-gated, jitter-free smoothing so the framing holds when your face drifts near the edge of the camera frame.
   - **Face light** — soft fill-light filter (brightness + warmth + saturation).
-  - **Auto Reduce Opacity of Face Cam** — fades translucent when the cursor is near and returns to full opacity when you move away.
-  - Background **blur**, built-in scenes, or **upload your own image** (matted via MediaPipe Selfie Segmentation).
-  - Per-effect filters for the **face only** (so the background isn't tinted along with you).
+  - **Face Blur** slider — Gaussian blur on the face layer only, for on-the-fly anonymisation without touching the background.
+  - **Auto Reduce Opacity of Face Cam** — the bubble fades translucent when the cursor is near and returns to full opacity when you move away.
+  - Backgrounds: **Off**, **Blur your real room**, **built-in scenes**, or **upload your own image**. Matting via MediaPipe Selfie Segmentation / Multiclass Segmenter / RVM Video Matting (Auto picks the best backend available).
+  - Separate **Background Effect / Background Blur / Background Zoom** sliders so you can tint, soften, or push into the replacement scene without touching the face layer.
 - **Cursor zoom** — the recorded canvas smoothly zooms toward your mouse for tutorial-style emphasis.
 - **Annotation overlay** — hold `Ctrl` and drag while recording to draw arrows / lines / boxes / circles / highlights in 8 colors with thickness, outline, and style presets.
 - **Idiot board** — a floating private teleprompter only you can see (hidden from screen capture). Auto-docks beneath the face-cam bubble.
 - **Save to folder** — automatic MP4 (no Save dialog), with a toggle to **open the folder** when recording finishes.
 - Recordings land in their own `ScreenRecording_YYYYMMDD_HHMMSS/` folder for clean organization.
+
+### Player tab
+
+- Automatically scans your save folder and lists every `ScreenRecording_*` MP4 it finds.
+- Built-in HTML5 player with full-length seek bar.
+- **Trim** — ffmpeg stream-copy cut (no re-encode) so a trimmed copy saves in seconds.
+- **Reveal in folder** / **Delete to trash** per recording.
+- When you finish a new recording in the Recorder tab, the app auto-jumps to Player and pre-selects the file you just saved.
 
 ### Face Blur tab
 
@@ -122,11 +135,13 @@ The `out/` directory contains the installer + supporting files. `electron-builde
 
 Coming soon — the editor is being rebuilt from scratch in a future release. Recordings still save fine in the meantime.
 
-### Cross-app conveniences
+### Cross-app
 
-- **Help** button in the header opens an in-app feature guide with a left-rail nav and a section per feature area. Updates ship with the build, so the docs are always in sync with the code.
-- **Quit** button in the header (and a red X in the floating HUD) shuts the entire app down immediately.
-- All settings are persisted across sessions (camera, mic, voice preset, save folder, auto toggles, etc.).
+- **Help** button in the header opens an in-app documentation modal with a left-rail nav, a section per feature area, and tips/troubleshooting — always ships with the build so the docs stay in sync with the code.
+- **Coffee** button in the header links to `paypal.me/qnsub` if you want to tip the maintainer.
+- **Quit** button in the header (and a red-X button in the floating HUD) shuts the whole app down immediately.
+- All settings are persisted across sessions (camera, mic, voice preset, BG music preset + volume, save folder, auto toggles, etc.).
+- Removed or renamed presets are auto-migrated to a safe default on next launch, so a version bump never leaves you staring at a silent selection.
 
 ### Packaging
 
@@ -136,13 +151,17 @@ Coming soon — the editor is being rebuilt from scratch in a future release. Re
 
 ## Shortcut reference
 
-| Action                              | Shortcut                  |
-|-------------------------------------|---------------------------|
-| Pause / resume recording (global)   | `Ctrl + Shift + P`        |
-| Draw annotation (while recording)   | Hold `Ctrl` + drag        |
-| Cancel region selection             | `Esc`                     |
-| Close help modal                    | `Esc`                     |
-| Zoom face-cam (mouse over bubble)   | Mouse wheel               |
+| Action                                                  | Shortcut                  |
+|---------------------------------------------------------|---------------------------|
+| Pause / resume recording (global)                       | `Ctrl + Shift + P`        |
+| Draw annotation (while recording)                       | Hold `Ctrl` + drag        |
+| Cancel region selection                                 | `Esc`                     |
+| Close help modal                                        | `Esc`                     |
+| Zoom face-cam (mouse over bubble)                       | Mouse wheel               |
+| Reposition face inside the shape                        | Drag the centre handle    |
+| Drag the whole face-cam window                          | Click & drag the bubble   |
+| Start / pause / stop from the floating HUD              | HUD buttons               |
+| Quit the entire app from the floating HUD               | Red **X** button          |
 
 ---
 
@@ -150,22 +169,40 @@ Coming soon — the editor is being rebuilt from scratch in a future release. Re
 
 ```
 src/
-├── main/         Electron main process (windows, IPC, ffmpeg, shortcuts, media:// protocol)
+├── main/         Electron main process
+│                 (windows, IPC, streaming ffmpeg recorder, shortcuts,
+│                  media:// protocol, cursor tracking, trimming)
 ├── preload/      Context-isolated preload bridges (one per window)
 ├── renderer/
-│   ├── main/     React UI — App (tab host), Recorder, Editor, FaceBlur, HelpModal
+│   ├── main/     React UI — App (tab host), Recorder, Player, FaceBlur,
+│   │             Editor (soon), HelpModal
 │   ├── region/   Transparent region-selector overlay
 │   ├── annotation/ Always-on-top arrow drawing overlay
 │   ├── countdown/  3-2-1 countdown window
 │   ├── webcam/   Floating face-cam bubble + embedded HUD
 │   ├── idiotboard/ Private teleprompter window (content-protected)
-│   └── lib/      compositor, segmenter, shapes, mediaRecorder, voiceChanger, autoFrame
-└── shared/       Shared types (shapes, effects, filters, annotation presets)
+│   └── lib/      compositor, segmenter (MediaPipe/RVM), shapes,
+│                 mediaRecorder, voiceChanger (Jungle pitch shifter),
+│                 bgMusic (procedural synth + BgMusicPlayer),
+│                 autoFrame (confidence-gated face tracking)
+└── shared/       Shared types (shapes, effects, filters, annotation presets,
+                  editor/project schema)
 ```
 
-The recorder composites screen + webcam + annotations onto a hidden 1920×1080 canvas, captures it via `canvas.captureStream(30)`, mixes mic + system audio (optionally through the voice-changer Web Audio graph) via an `AudioContext`, and records to WebM with `MediaRecorder`. On stop, the WebM is encoded to MP4 by the bundled `ffmpeg-static` binary using a hardware encoder when available (NVENC / QuickSync / AMF / VideoToolbox) with a `libx264` software fallback.
+**Recording pipeline.** The recorder composites screen + webcam + annotations onto a hidden 1920×1080 canvas, captures it via `canvas.captureStream(30)`, and builds a final `MediaStream` by mixing:
 
-The cursor-aware face-cam avoidance runs entirely in the **main** process: a single `setInterval` polls `screen.getCursorScreenPoint()` at ~30fps and adjusts the webcam window's bounds and opacity through `setBounds()` / `setOpacity()` with exponential smoothing so the transitions glide instead of snapping.
+1. **Video** — the composited canvas track.
+2. **System audio** — Windows loopback / macOS screen-capture audio track.
+3. **Mic audio** — optionally routed through the `voiceChanger` Web Audio graph (Jungle pitch shifter + preset effect chain like ring mod, bandpass, shelving).
+4. **Background music** — the `BgMusicPlayer` renders each preset loop into an `AudioBuffer` via an `OfflineAudioContext` and plays it through a `MediaStreamAudioDestinationNode` that feeds the recorder.
+
+The `MediaRecorder` produces WebM chunks that stream directly into a long-running `ffmpeg-static` child process. Ffmpeg encodes to MP4 in parallel with the capture using a hardware encoder when available (NVENC / QuickSync / AMF / VideoToolbox) with a `libx264 -preset ultrafast` software fallback, so when you hit Stop most of the encode is already done.
+
+**Floating windows.** The webcam bubble, idiot board, annotation overlay, and countdown each run in their own `BrowserWindow` with `transparent: true`, `frame: false`, `alwaysOnTop('screen-saver')`, and `setContentProtection(true)` where appropriate so HUD chrome never shows up in screen-capture output.
+
+**Cursor-aware opacity.** Runs in the **main** process: a `setInterval` polls `screen.getCursorScreenPoint()` at ~30fps, compares against the webcam window's bounds + a buffer, and adjusts `setOpacity()` via exponential smoothing so the fade glides instead of snapping. Only active when the "Auto reduce opacity" checkbox is on.
+
+**Face auto-centering.** The segmentation mask centroid is piped through `autoFrame.ts` which applies four stacked stabilizers: confidence gate (hold last framing when mask coverage drops), dead-zone, exponential smoothing, and per-frame step cap. Both the live floating bubble and the recording compositor share the exact same filter so the preview and the MP4 match frame-for-frame.
 
 ---
 

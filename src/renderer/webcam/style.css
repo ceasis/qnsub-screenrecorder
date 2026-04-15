@@ -24,6 +24,8 @@ html, body, #root {
 .toolbar {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 6px;
   height: 24px;
   margin-bottom: 1px;
   width: 100%;
@@ -63,6 +65,32 @@ html, body, #root {
 .dots span:nth-child(1) { background: linear-gradient(135deg, #d8baff 0%, #b48bff 100%); }
 .dots span:nth-child(2) { background: linear-gradient(135deg, #c79cff 0%, #9a6bff 100%); }
 .dots span:nth-child(3) { background: linear-gradient(135deg, #b685ff 0%, #8855ff 100%); }
+
+/* Maximize / open-main-window button. Same pill shape as .dots so
+   the two reading as a pair, but square-ish and coloured in the
+   app accent so it stands out as "bring back the main window". */
+.show-main {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 26px;
+  background: rgba(10, 14, 20, 0.85);
+  border: 1px solid rgba(111, 182, 255, 0.45);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  color: #6fb6ff;
+  backdrop-filter: blur(6px);
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.show-main:hover {
+  background: rgba(30, 60, 100, 0.9);
+  border-color: rgba(111, 182, 255, 0.8);
+}
+.show-main:active { transform: translateY(1px); }
+.show-main svg { width: 14px; height: 14px; }
 
 /* Wrapper so the translucent drag handle can overlay the bubble without
    touching the bubble element itself (adding position/children to an
@@ -220,6 +248,7 @@ html, body, #root {
 .ec-btn {
   -webkit-app-region: no-drag;
   appearance: none;
+  box-sizing: border-box;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.06);
   color: #e6edf3;
@@ -227,6 +256,7 @@ html, body, #root {
   width: 20px;
   height: 20px;
   padding: 0;
+  line-height: 0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -235,7 +265,12 @@ html, body, #root {
 }
 .ec-btn:hover { background: rgba(255, 255, 255, 0.12); }
 .ec-btn:active { transform: translateY(1px); }
-.ec-btn svg { display: block; }
+.ec-btn svg {
+  display: block;
+  width: 12px;
+  height: 12px;
+  /* Overrides the inline width/height on the <svg> tags in the TSX. */
+}
 .ec-btn.start  { color: #2ecc71; background: rgba(46, 204, 113, 0.18); border-color: rgba(46, 204, 113, 0.55); }
 .ec-btn.start:hover { background: rgba(46, 204, 113, 0.32); }
 .ec-btn.pause  { color: #ffb84f; background: rgba(255, 184, 79, 0.16); border-color: rgba(255, 184, 79, 0.55); }

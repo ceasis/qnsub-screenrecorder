@@ -288,6 +288,13 @@ app.on('will-quit', () => {
   if (tray && !tray.isDestroyed()) { tray.destroy(); tray = null; }
 });
 
+// The floating webcam window asks for the main window to come back
+// into focus via this channel (maximize button next to its 3-dots).
+ipcMain.handle('app:show-main', () => {
+  showMainWindow();
+  return true;
+});
+
 // Renderer can request a real quit via this channel (the in-app Quit button).
 ipcMain.handle('app:quit', () => {
   isQuitting = true;

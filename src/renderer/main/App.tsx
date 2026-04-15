@@ -45,7 +45,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>QNSub Studio</h1>
-        <nav className="tabs">
+        <nav className="tabs main-tabs">
           <button
             className={`tab ${tab === 'recorder' ? 'sel' : ''}`}
             onClick={() => setTab('recorder')}
@@ -100,6 +100,8 @@ export default function App() {
             </span>
             Editor
           </button>
+        </nav>
+        <nav className="tabs action-tabs">
           <button
             className="tab tab-coffee"
             onClick={() => window.open('https://paypal.me/qnsub', '_blank', 'noopener')}

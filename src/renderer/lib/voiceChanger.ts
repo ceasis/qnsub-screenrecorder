@@ -11,12 +11,23 @@
 // voices beyond simple up/down pitch.
 
 export type VoicePreset =
-  | 'off'       // pass-through, no processing, zero latency
-  | 'deep'      // villain / movie-trailer — pitch down + low-shelf boost
-  | 'high'      // chipmunk — pitch up + high-shelf sparkle
-  | 'radio'     // tinny AM-radio bandpass
-  | 'robot'     // ring-modulated metallic timbre
-  | 'custom';   // user-controlled pitch slider
+  | 'off'         // pass-through, no processing, zero latency
+  | 'deep'        // villain / movie-trailer — pitch down + low-shelf boost
+  | 'monster'     // deep + distortion + sub-shelf — true low growl
+  | 'demon'       // very deep + heavy distortion + reverb tail
+  | 'high'        // chipmunk — pitch up + high-shelf sparkle
+  | 'helium'      // super high pitch, cartoony
+  | 'radio'       // tinny AM-radio bandpass
+  | 'telephone'   // very tight bandpass + compression
+  | 'megaphone'   // bandpass + distortion + high-pass
+  | 'walkie'      // narrow bandpass + static gate
+  | 'robot'       // ring-modulated metallic timbre
+  | 'alien'       // high pitch + ring mod + tremolo
+  | 'ghost'       // slight pitch + large reverb + highpass
+  | 'whisper'     // highpass + compression
+  | 'underwater'  // lowpass + tremolo — muted drowning effect
+  | 'vintage'     // bandpass + saturation — old record
+  | 'custom';     // user-controlled pitch slider
 
 export type VoiceChangerConfig = {
   preset: VoicePreset;
@@ -39,9 +50,14 @@ export type VoiceChangerHandle = {
 };
 
 // -------- Jungle pitch shifter --------
-const BUFFER_TIME = 0.100;
-const FADE_TIME = 0.050;
-const DELAY_TIME = 0.100;
+// Shorter buffers reduce the delay-line drift that makes downward
+// pitch shifts "break up" on slow / low-tone speech. The trade-off
+// is slightly more metallic shimmer on fast speech — an acceptable
+// swap, since the artifact the user actually hears complaining
+// about is the breakup, not the shimmer.
+const BUFFER_TIME = 0.060;
+const FADE_TIME = 0.030;
+const DELAY_TIME = 0.060;
 
 function createFadeBuffer(ctx: AudioContext, activeTime: number, fadeTime: number): AudioBuffer {
   const length1 = Math.floor(activeTime * ctx.sampleRate);
@@ -205,27 +221,139 @@ class Jungle {
 // -------- Preset resolution --------
 function presetPitch(preset: VoicePreset, customPitch: number): number {
   switch (preset) {
-    case 'deep':   return -0.6;
-    case 'high':   return +0.7;
-    case 'radio':  return 0;
-    case 'robot':  return 0;
-    case 'custom': return Math.max(-1, Math.min(1, customPitch));
-    default:       return 0;
+    case 'deep':       return -0.55;
+    case 'monster':    return -0.75;
+    case 'demon':      return -0.85;
+    case 'high':       return +0.65;
+    case 'helium':     return +0.9;
+    case 'radio':      return 0;
+    case 'telephone':  return 0;
+    case 'megaphone':  return 0;
+    case 'walkie':     return 0;
+    case 'robot':      return 0;
+    case 'alien':      return +0.4;
+    case 'ghost':      return -0.2;
+    case 'whisper':    return 0;
+    case 'underwater': return -0.15;
+    case 'vintage':    return 0;
+    case 'custom':     return Math.max(-1, Math.min(1, customPitch));
+    default:           return 0;
   }
 }
 
 export function voicePresetLabel(p: VoicePreset): string {
   switch (p) {
-    case 'off':    return 'Off (normal voice)';
-    case 'deep':   return 'Deep (villain)';
-    case 'high':   return 'High (chipmunk)';
-    case 'radio':  return 'Radio (tinny)';
-    case 'robot':  return 'Robot (metallic)';
-    case 'custom': return 'Custom pitch';
+    case 'off':        return 'Off';
+    case 'deep':       return 'Deep';
+    case 'monster':    return 'Monster';
+    case 'demon':      return 'Demon';
+    case 'high':       return 'High';
+    case 'helium':     return 'Helium';
+    case 'radio':      return 'Radio';
+    case 'telephone':  return 'Telephone';
+    case 'megaphone':  return 'Megaphone';
+    case 'walkie':     return 'Walkie';
+    case 'robot':      return 'Robot';
+    case 'alien':      return 'Alien';
+    case 'ghost':      return 'Ghost';
+    case 'whisper':    return 'Whisper';
+    case 'underwater': return 'Underwater';
+    case 'vintage':    return 'Vintage';
+    case 'custom':     return 'Custom';
   }
 }
 
-export const VOICE_PRESETS: VoicePreset[] = ['off', 'deep', 'high', 'radio', 'robot', 'custom'];
+export const VOICE_PRESETS: VoicePreset[] = [
+  'off', 'deep', 'monster', 'demon', 'high', 'helium',
+  'radio', 'telephone', 'megaphone', 'walkie',
+  'robot', 'alien', 'ghost', 'whisper', 'underwater', 'vintage',
+  'custom'
+];
+
+// -------- FX helpers --------
+// Tanh-ish soft-clip curve for distortion. `amount` in 1..100; higher
+// = more aggressive clipping. Used by monster/demon/megaphone/vintage.
+// Returns a Float32Array backed by an ArrayBuffer (not SharedArrayBuffer)
+// so it can be assigned to WaveShaperNode.curve without TS complaining
+// about the backing-buffer type.
+function makeDistortionCurve(amount: number): Float32Array {
+  const n = 44100;
+  const curve = new Float32Array(new ArrayBuffer(n * 4));
+  const k = amount;
+  const deg = Math.PI / 180;
+  for (let i = 0; i < n; ++i) {
+    const x = (i * 2) / n - 1;
+    curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
+  }
+  return curve;
+}
+
+// Synthetic impulse response for a cheap reverb — exponentially
+// decaying white noise. Not a real room, but enough to give presets
+// like ghost / demon a sense of space without loading a wav file.
+function makeReverbIR(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const length = Math.max(1, Math.floor(rate * seconds));
+  const ir = ctx.createBuffer(2, length, rate);
+  for (let c = 0; c < 2; c++) {
+    const data = ir.getChannelData(c);
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+    }
+  }
+  return ir;
+}
+
+// Build a wet/dry reverb section. Input connects to `input`, output
+// comes out of `output`. Returns the nodes for cleanup.
+function makeReverb(ctx: AudioContext, seconds: number, decay: number, wet: number) {
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  const dry = ctx.createGain();
+  const wetGain = ctx.createGain();
+  dry.gain.value = 1 - wet;
+  wetGain.gain.value = wet;
+  const conv = ctx.createConvolver();
+  conv.buffer = makeReverbIR(ctx, seconds, decay);
+  input.connect(dry);
+  dry.connect(output);
+  input.connect(conv);
+  conv.connect(wetGain);
+  wetGain.connect(output);
+  return { input, output, nodes: [input, dry, wetGain, conv, output] as AudioNode[] };
+}
+
+// Tremolo: amplitude modulation driven by a low-frequency sine. `rate`
+// in Hz (typical 4–8), `depth` in 0..1.
+function makeTremolo(ctx: AudioContext, rate: number, depth: number) {
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  // Centre at 1 minus depth/2, oscillate by depth/2 on either side.
+  const center = 1 - depth * 0.5;
+  output.gain.value = center;
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  lfo.frequency.value = rate;
+  lfoGain.gain.value = depth * 0.5;
+  lfo.connect(lfoGain);
+  lfoGain.connect(output.gain);
+  lfo.start();
+  input.connect(output);
+  return { input, output, lfo, nodes: [input, output, lfoGain] as AudioNode[] };
+}
+
+function makeBandpass(ctx: AudioContext, lowHz: number, highHz: number, q: number) {
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = lowHz;
+  hp.Q.value = q;
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = highHz;
+  lp.Q.value = q;
+  hp.connect(lp);
+  return { input: hp, output: lp, nodes: [hp, lp] as AudioNode[] };
+}
 
 /**
  * Build a processed MediaStream from the raw mic stream. The returned
@@ -294,24 +422,56 @@ export function createVoiceChanger(
     // Build the new FX chain and connect fxBus → chain → dest. For
     // the pass-through presets ('off', 'custom'), there's no chain —
     // fxBus connects directly to dest.
-    if (nextCfg.preset === 'radio') {
-      const hp = ctx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.value = 300;
-      const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.value = 3400;
+    const p = nextCfg.preset;
+
+    if (p === 'radio') {
+      const bp = makeBandpass(ctx, 300, 3400, 1.2);
       const peak = ctx.createBiquadFilter();
       peak.type = 'peaking';
       peak.frequency.value = 1800;
       peak.Q.value = 1.2;
       peak.gain.value = 6;
-      fxBus.connect(hp);
-      hp.connect(lp);
-      lp.connect(peak);
+      fxBus.connect(bp.input);
+      bp.output.connect(peak);
       peak.connect(dest);
-      fxNodes = [hp, lp, peak];
-    } else if (nextCfg.preset === 'robot') {
+      fxNodes = [...bp.nodes, peak];
+
+    } else if (p === 'telephone') {
+      const bp = makeBandpass(ctx, 500, 2800, 1.5);
+      const drive = ctx.createWaveShaper();
+      drive.curve = makeDistortionCurve(12) as any;
+      fxBus.connect(bp.input);
+      bp.output.connect(drive);
+      drive.connect(dest);
+      fxNodes = [...bp.nodes, drive];
+
+    } else if (p === 'megaphone') {
+      const bp = makeBandpass(ctx, 400, 3500, 1.4);
+      const clip = ctx.createWaveShaper();
+      clip.curve = makeDistortionCurve(40) as any;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking';
+      peak.frequency.value = 2200;
+      peak.gain.value = 5;
+      peak.Q.value = 1;
+      fxBus.connect(bp.input);
+      bp.output.connect(clip);
+      clip.connect(peak);
+      peak.connect(dest);
+      fxNodes = [...bp.nodes, clip, peak];
+
+    } else if (p === 'walkie') {
+      const bp = makeBandpass(ctx, 600, 2400, 2.0);
+      const clip = ctx.createWaveShaper();
+      clip.curve = makeDistortionCurve(25) as any;
+      fxBus.connect(bp.input);
+      bp.output.connect(clip);
+      clip.connect(dest);
+      fxNodes = [...bp.nodes, clip];
+
+    } else if (p === 'robot') {
+      // Classic ring-mod robot: multiply the signal by a 50Hz sine so
+      // the voice gets metallic sideband tones.
       const ring = ctx.createGain();
       ring.gain.value = 0;
       const osc = ctx.createOscillator();
@@ -322,22 +482,150 @@ export function createVoiceChanger(
       fxBus.connect(ring);
       ring.connect(dest);
       fxNodes = [ring];
-    } else if (nextCfg.preset === 'deep') {
+
+    } else if (p === 'alien') {
+      // High pitch + ring mod + tremolo for a warbling extraterrestrial.
+      const ring = ctx.createGain();
+      ring.gain.value = 0;
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 90;
+      osc.connect(ring.gain);
+      osc.start();
+      ringOsc = osc;
+      const trem = makeTremolo(ctx, 6, 0.4);
+      fxBus.connect(ring);
+      ring.connect(trem.input);
+      trem.output.connect(dest);
+      fxNodes = [ring, ...trem.nodes];
+
+    } else if (p === 'deep') {
       const ls = ctx.createBiquadFilter();
       ls.type = 'lowshelf';
-      ls.frequency.value = 220;
-      ls.gain.value = 6;
+      ls.frequency.value = 240;
+      ls.gain.value = 8;
       fxBus.connect(ls);
       ls.connect(dest);
       fxNodes = [ls];
-    } else if (nextCfg.preset === 'high') {
+
+    } else if (p === 'monster') {
+      // Deep growl: low-shelf boost + sub-low-pass + saturation.
+      const ls = ctx.createBiquadFilter();
+      ls.type = 'lowshelf';
+      ls.frequency.value = 220;
+      ls.gain.value = 10;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3200;
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeDistortionCurve(18) as any;
+      fxBus.connect(ls);
+      ls.connect(lp);
+      lp.connect(shaper);
+      shaper.connect(dest);
+      fxNodes = [ls, lp, shaper];
+
+    } else if (p === 'demon') {
+      // Very deep + heavy distortion + cavern reverb.
+      const ls = ctx.createBiquadFilter();
+      ls.type = 'lowshelf';
+      ls.frequency.value = 180;
+      ls.gain.value = 12;
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeDistortionCurve(60) as any;
+      const rev = makeReverb(ctx, 2.4, 1.5, 0.35);
+      fxBus.connect(ls);
+      ls.connect(shaper);
+      shaper.connect(rev.input);
+      rev.output.connect(dest);
+      fxNodes = [ls, shaper, ...rev.nodes];
+
+    } else if (p === 'high') {
       const hs = ctx.createBiquadFilter();
       hs.type = 'highshelf';
       hs.frequency.value = 2000;
-      hs.gain.value = 4;
+      hs.gain.value = 5;
       fxBus.connect(hs);
       hs.connect(dest);
       fxNodes = [hs];
+
+    } else if (p === 'helium') {
+      const hs = ctx.createBiquadFilter();
+      hs.type = 'highshelf';
+      hs.frequency.value = 2200;
+      hs.gain.value = 8;
+      const presence = ctx.createBiquadFilter();
+      presence.type = 'peaking';
+      presence.frequency.value = 3500;
+      presence.Q.value = 1;
+      presence.gain.value = 4;
+      fxBus.connect(hs);
+      hs.connect(presence);
+      presence.connect(dest);
+      fxNodes = [hs, presence];
+
+    } else if (p === 'ghost') {
+      // Spooky: subtle pitch drop + large reverb + highpass to remove
+      // body weight.
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 400;
+      const rev = makeReverb(ctx, 3.5, 2.0, 0.55);
+      fxBus.connect(hp);
+      hp.connect(rev.input);
+      rev.output.connect(dest);
+      fxNodes = [hp, ...rev.nodes];
+
+    } else if (p === 'whisper') {
+      // Breathy: highpass + peaking at sibilant band, gain compressed.
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 800;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking';
+      peak.frequency.value = 5000;
+      peak.Q.value = 1.2;
+      peak.gain.value = 6;
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -30;
+      comp.knee.value = 10;
+      comp.ratio.value = 6;
+      comp.attack.value = 0.002;
+      comp.release.value = 0.1;
+      fxBus.connect(hp);
+      hp.connect(peak);
+      peak.connect(comp);
+      comp.connect(dest);
+      fxNodes = [hp, peak, comp];
+
+    } else if (p === 'underwater') {
+      // Muffled lowpass + slow tremolo for "drowning" feel.
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 800;
+      lp.Q.value = 1;
+      const trem = makeTremolo(ctx, 3, 0.25);
+      fxBus.connect(lp);
+      lp.connect(trem.input);
+      trem.output.connect(dest);
+      fxNodes = [lp, ...trem.nodes];
+
+    } else if (p === 'vintage') {
+      // Old 78rpm record feel: bandpass + saturation + mild peak at
+      // the presence band.
+      const bp = makeBandpass(ctx, 250, 5000, 0.9);
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeDistortionCurve(8) as any;
+      const peak = ctx.createBiquadFilter();
+      peak.type = 'peaking';
+      peak.frequency.value = 1500;
+      peak.Q.value = 1.2;
+      peak.gain.value = 4;
+      fxBus.connect(bp.input);
+      bp.output.connect(shaper);
+      shaper.connect(peak);
+      peak.connect(dest);
+      fxNodes = [...bp.nodes, shaper, peak];
+
     } else {
       // 'off' / 'custom' / default: pass-through from fxBus to dest.
       fxBus.connect(dest);
