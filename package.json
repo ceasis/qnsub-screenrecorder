@@ -1,6 +1,6 @@
 {
   "name": "qnsub-screenrecorder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Full-featured cross-platform screen recorder with webcam overlay, annotations, and system audio",
   "main": "dist/main/main.js",
   "author": "QNSub",
@@ -10,9 +10,10 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
-    "dist": "npm run build && electron-builder -mw",
-    "dist:win": "npm run build && electron-builder --win nsis",
-    "dist:mac": "npm run build && electron-builder --mac dmg"
+    "bump": "npm --no-git-tag-version version patch",
+    "dist": "npm run bump && npm run build && electron-builder -mw",
+    "dist:win": "npm run bump && npm run build && electron-builder --win nsis",
+    "dist:mac": "npm run bump && npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
