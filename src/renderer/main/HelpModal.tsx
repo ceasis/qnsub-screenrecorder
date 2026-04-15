@@ -359,9 +359,9 @@ const SECTIONS: Section[] = [
                 cursor: 'pointer'
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = '#e11d48';
+                e.currentTarget.style.borderColor = '#ffb86b';
                 e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = '0 8px 20px rgba(225, 29, 72, 0.25)';
+                e.currentTarget.style.boxShadow = '0 8px 20px rgba(255, 184, 107, 0.22)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.borderColor = '#262d36';
@@ -370,7 +370,7 @@ const SECTIONS: Section[] = [
               }}
             >
               <span style={{ fontSize: 20 }}>{t.emoji}</span>
-              <span style={{ fontWeight: 700, fontSize: 15, color: '#ff6b7a' }}>${t.amount}</span>
+              <span style={{ fontWeight: 700, fontSize: 15, color: '#ffb86b' }}>${t.amount}</span>
               <span style={{ fontSize: 12, color: '#8b949e' }}>{t.label} of coffee</span>
             </a>
           ))}
@@ -387,17 +387,17 @@ const SECTIONS: Section[] = [
             padding: '18px 22px',
             marginBottom: 12,
             borderRadius: 12,
-            border: '1px solid rgba(255, 200, 60, 0.45)',
-            background: 'linear-gradient(135deg, rgba(255, 200, 60, 0.12) 0%, rgba(225, 29, 72, 0.12) 100%)',
+            border: '1px solid rgba(255, 184, 107, 0.45)',
+            background: 'linear-gradient(135deg, rgba(255, 184, 107, 0.14) 0%, rgba(120, 74, 32, 0.18) 100%)',
             textDecoration: 'none',
             transition: 'border-color 0.15s ease, box-shadow 0.15s ease'
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = 'rgba(255, 200, 60, 0.8)';
-            e.currentTarget.style.boxShadow = '0 10px 24px rgba(255, 200, 60, 0.22)';
+            e.currentTarget.style.borderColor = 'rgba(255, 184, 107, 0.85)';
+            e.currentTarget.style.boxShadow = '0 10px 24px rgba(255, 184, 107, 0.22)';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = 'rgba(255, 200, 60, 0.45)';
+            e.currentTarget.style.borderColor = 'rgba(255, 184, 107, 0.45)';
             e.currentTarget.style.boxShadow = 'none';
           }}
         >
@@ -407,23 +407,23 @@ const SECTIONS: Section[] = [
               fontWeight: 700,
               letterSpacing: '0.12em',
               textTransform: 'uppercase',
-              color: '#ffd96b',
+              color: '#ffb86b',
               padding: '3px 10px',
               borderRadius: 999,
-              border: '1px solid rgba(255, 200, 60, 0.5)',
-              background: 'rgba(255, 200, 60, 0.12)'
+              border: '1px solid rgba(255, 184, 107, 0.5)',
+              background: 'rgba(255, 184, 107, 0.12)'
             }}
           >
             🏆 Sponsor tier
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 28 }}>🖥️☕</span>
-            <span style={{ fontSize: 30, fontWeight: 800, color: '#ffd96b', letterSpacing: '-0.02em' }}>
+            <span style={{ fontSize: 30, fontWeight: 800, color: '#ffb86b', letterSpacing: '-0.02em' }}>
               $1,000
             </span>
           </div>
           <span style={{ fontSize: 12.5, color: '#9aa3b2', textAlign: 'center' }}>
-            Pays for a full year of project hosting, domain, signing cert & CI
+            Helps pay for tech expenses
           </span>
         </a>
         <p className="muted" style={{ fontSize: 12 }}>
