@@ -71,6 +71,7 @@ export type TextOverlay = {
   y: number;          // 0..1 (center y)
   bold?: boolean;
   italic?: boolean;
+  opacity?: number;   // 0..1, defaults to 1
 };
 
 export class Compositor {
@@ -498,7 +499,7 @@ export class Compositor {
       ctx.textBaseline = 'middle';
       ctx.fillStyle = t.color || '#ffffff';
       ctx.strokeStyle = '#000000';
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, t.opacity ?? 1));
       ctx.globalCompositeOperation = 'source-over';
       ctx.filter = 'none';
       ctx.shadowColor = 'transparent';

@@ -9,7 +9,7 @@ import {
   createRegionWindows,
   createWebcamWindow
 } from './windows';
-import { remuxWebmToMp4 } from './ffmpeg';
+import { remuxWebmToMp4, trimVideo } from './ffmpeg';
 import { streamStart, streamChunk, streamStop, streamCancel, ffmpegUnavailableReason } from './streamingRecorder';
 import ffmpegStaticImport from 'ffmpeg-static';
 import type { ChildProcess } from 'child_process';
@@ -529,6 +529,101 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
     else main.webContents.openDevTools({ mode: 'detach' });
     return true;
   });
+
+  // ---------- Player: list recorded videos ----------
+  // Walks the save folder one level deep (ScreenRecording_*/ subfolders)
+  // plus any loose .mp4 files at the root, and returns them newest-first
+  // with size + mtime so the Player tab can render a scrollable list
+  // without loading the whole file. The renderer plays each hit via the
+  // media:// protocol we register in main.ts.
+  ipcMain.handle('player:list', async (_e, root: string | null) => {
+    if (!root) return [];
+    const VIDEO_EXTS = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi']);
+    const results: Array<{ path: string; name: string; size: number; mtime: number; folder: string }> = [];
+    try {
+      const topEntries = await fs.readdir(root, { withFileTypes: true });
+      for (const e of topEntries) {
+        const full = join(root, e.name);
+        if (e.isDirectory()) {
+          try {
+            const inner = await fs.readdir(full, { withFileTypes: true });
+            for (const f of inner) {
+              if (!f.isFile()) continue;
+              const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+              if (!VIDEO_EXTS.has(ext)) continue;
+              const p = join(full, f.name);
+              try {
+                const st = await fs.stat(p);
+                results.push({ path: p, name: f.name, size: st.size, mtime: st.mtimeMs, folder: e.name });
+              } catch {}
+            }
+          } catch {}
+        } else if (e.isFile()) {
+          const ext = e.name.slice(e.name.lastIndexOf('.')).toLowerCase();
+          if (!VIDEO_EXTS.has(ext)) continue;
+          try {
+            const st = await fs.stat(full);
+            results.push({ path: full, name: e.name, size: st.size, mtime: st.mtimeMs, folder: '' });
+          } catch {}
+        }
+      }
+    } catch {
+      return [];
+    }
+    results.sort((a, b) => b.mtime - a.mtime);
+    return results;
+  });
+
+  ipcMain.handle('player:reveal', async (_e, filePath: string) => {
+    try { shell.showItemInFolder(filePath); return true; } catch { return false; }
+  });
+
+  // Opens a folder in the OS file browser. When no path is supplied,
+  // falls back to the user's Desktop directory — the Player tab's
+  // "Open Desktop" shortcut uses this.
+  ipcMain.handle('player:open-folder', async (_e, folder?: string) => {
+    try {
+      const target = folder && folder.length > 0 ? folder : app.getPath('desktop');
+      const err = await shell.openPath(target);
+      return err === '';
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('player:delete', async (_e, filePath: string) => {
+    try { await shell.trashItem(filePath); return true; } catch { return false; }
+  });
+
+  // Fast stream-copy trim. The renderer passes the input path plus
+  // [startSec, endSec]; we write the new file next to the original
+  // with `_trimmed_HHMMSS` appended to the stem so two trims in the
+  // same minute still produce distinct filenames.
+  ipcMain.handle(
+    'player:trim',
+    async (_e, opts: { path: string; startSec: number; endSec: number }): Promise<{ ok: boolean; path?: string; error?: string }> => {
+      try {
+        const input = opts.path;
+        const dot = input.lastIndexOf('.');
+        const rawStem = dot > 0 ? input.slice(0, dot) : input;
+        const ext = dot > 0 ? input.slice(dot) : '.mp4';
+        // Strip any pre-existing `_trim_HHMMSS` / `_trimmed_HHMMSS`
+        // suffixes so repeat-trimming doesn't grow the filename
+        // unboundedly. The `(?:med)?` is what makes the whole "med"
+        // group optional — `_trimmed?` would only make the `d`
+        // optional and wouldn't match a plain `_trim_`.
+        const stem = rawStem.replace(/(_trim(?:med)?_\d{6})+$/, '');
+        const now = new Date();
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const stamp = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        const output = `${stem}_trim_${stamp}${ext}`;
+        await trimVideo(input, output, opts.startSec, opts.endSec);
+        return { ok: true, path: output };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || String(e) };
+      }
+    }
+  );
 
   ipcMain.handle('settings:pick-folder', async () => {
     const main = getMainWindow();

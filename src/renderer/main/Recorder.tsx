@@ -11,7 +11,7 @@ import type {
 } from '../../shared/types';
 import { ANNOTATION_COLORS, ANNOTATION_PRESETS, ARROW_STYLES, COLOR_HEX, EFFECTS, SHAPES as ALL_SHAPES } from '../../shared/types';
 import { Compositor, WebcamSettings, type TextOverlay, type TextOverlayEffect } from '../lib/compositor';
-import { getMicStream, getWebcamStream, listCameras, listMics } from '../lib/webcam';
+import { getMicStream, getWebcamStream, listCameras, listMics, listSpeakers } from '../lib/webcam';
 import { getScreenStream } from '../lib/screen';
 import { Recorder as MR, mixAudioStreams } from '../lib/mediaRecorder';
 import {
@@ -261,6 +261,12 @@ export default function RecorderTab() {
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [cameraId, setCameraId] = usePersistedState<string | undefined>('rec.cameraId', undefined);
   const [micId, setMicId] = usePersistedState<string | undefined>('rec.micId', undefined);
+  // Audio output (speaker) device — applies to the Player tab's
+  // `<video>` via `setSinkId`. The recorder itself doesn't play
+  // anything back, but we keep the setting here next to Mic device
+  // so the Audio panel has everything in one place.
+  const [speakerId, setSpeakerId] = usePersistedState<string | undefined>('rec.speakerId', undefined);
+  const [speakers, setSpeakers] = useState<MediaDeviceInfo[]>([]);
   const [includeSystemAudio, setIncludeSystemAudio] = usePersistedState<boolean>('rec.sysAudio', true);
   const [includeMic, setIncludeMic] = usePersistedState<boolean>('rec.mic', true);
   const [voicePreset, setVoicePreset] = usePersistedState<VoicePreset>('rec.voicePreset', 'off');
@@ -313,6 +319,7 @@ export default function RecorderTab() {
   const [fixedTextY, setFixedTextY] = usePersistedState<number>('rec.fixedTextY', 0.92);
   const [fixedTextBold, setFixedTextBold] = usePersistedState<boolean>('rec.fixedTextBold', true);
   const [fixedTextItalic, setFixedTextItalic] = usePersistedState<boolean>('rec.fixedTextItalic', false);
+  const [fixedTextOpacity, setFixedTextOpacity] = usePersistedState<number>('rec.fixedTextOpacity', 1);
   const [autoCenter, setAutoCenter] = usePersistedState<boolean>('rec.autoCenter', false);
   // Sample backgrounds loaded from `sample-background/` on mount.
   // Each entry has a name and a self-contained data URL so clicking a
@@ -481,15 +488,17 @@ export default function RecorderTab() {
   useEffect(() => {
     (async () => {
       try {
-        const [s, cams, mis, defFolder] = await Promise.all([
+        const [s, cams, mis, spks, defFolder] = await Promise.all([
           window.api.listSources(),
           listCameras().catch(() => []),
           listMics().catch(() => []),
+          listSpeakers().catch(() => []),
           window.api.getDefaultFolder().catch(() => '')
         ]);
         setSources(s);
         setCameras(cams);
         setMics(mis);
+        setSpeakers(spks);
         const screens = s.filter((x) => x.id.startsWith('screen:'));
         if (screens[0]) setSelectedSource(screens[0].id);
         if (!saveFolder && defFolder) setSaveFolder(defFolder);
@@ -747,7 +756,8 @@ export default function RecorderTab() {
           x: fixedTextX,
           y: fixedTextY,
           bold: fixedTextBold,
-          italic: fixedTextItalic
+          italic: fixedTextItalic,
+          opacity: fixedTextOpacity
         });
       }
 
@@ -905,6 +915,12 @@ export default function RecorderTab() {
         savedPath = res.path;
       }
       setStatus('Saved: ' + savedPath);
+      // Signal the app shell to flip to the Player tab and auto-select
+      // this recording. A plain DOM CustomEvent keeps us from threading
+      // another prop or state store through the App.
+      if (savedPath) {
+        window.dispatchEvent(new CustomEvent('qnsub:recording-saved', { detail: { path: savedPath } }));
+      }
     } catch (e: any) {
       setStatus('Error: ' + e.message);
     } finally {
@@ -954,11 +970,12 @@ export default function RecorderTab() {
           x: fixedTextX,
           y: fixedTextY,
           bold: fixedTextBold,
-          italic: fixedTextItalic
+          italic: fixedTextItalic,
+          opacity: fixedTextOpacity
         }
       : null;
     compositorRef.current?.setTextOverlay(overlay);
-  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic]);
+  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic, fixedTextOpacity]);
 
   // Fixed text preview canvas — shows a live miniature of how the
   // overlay will look on the recorded frame. Renders with the same
@@ -1033,6 +1050,7 @@ export default function RecorderTab() {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = fixedTextColor || '#ffffff';
     ctx.strokeStyle = '#000000';
+    ctx.globalAlpha = Math.max(0, Math.min(1, fixedTextOpacity));
     ctx.shadowColor = 'transparent';
     ctx.shadowBlur = 0;
     ctx.shadowOffsetX = 0;
@@ -1063,7 +1081,7 @@ export default function RecorderTab() {
     } else {
       ctx.fillText(fixedText, cx, cy);
     }
-  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic]);
+  }, [fixedText, fixedTextFont, fixedTextSize, fixedTextColor, fixedTextEffect, fixedTextX, fixedTextY, fixedTextBold, fixedTextItalic, fixedTextOpacity]);
 
   // Always show the floating webcam overlay window while we're on the
   // Recorder tab. The window contains:
@@ -1274,7 +1292,7 @@ export default function RecorderTab() {
         <section className="panel">
           <h2>
             <span className="step">1</span> Web Cam Basic Settings
-            <Help>Core webcam framing plus the background scene. Shape, size, and zoom control how your face is framed in the floating bubble and in the recording. Mode + samples + effect control what goes behind you. Everything here applies to both the live preview and the final video.</Help>
+            <Help>Master switch plus shape and size. Turn the webcam overlay on to show a floating face-cam bubble, then pick its shape and size. Face and background settings live in the next two panels.</Help>
           </h2>
           <div className="row two-col">
             <label className="row-label">Webcam overlay <Help>Master switch for the whole face-cam pipeline. When enabled, a small floating webcam window shows on your desktop immediately. You can drag it anywhere and click the 3-dot menu on it to configure. Turn off to record the screen without any face-cam.</Help></label>
@@ -1307,10 +1325,45 @@ export default function RecorderTab() {
               ))}
             </div>
           </div>
+        </section>
+
+        <section className="panel">
+          <h2>
+            <span className="step">2</span> Web Cam Face Settings
+            <Help>Everything that affects your face only — zoom, colour filter, and face blur. These settings never touch the background layer, so you can restyle your face independently of the scene behind you.</Help>
+          </h2>
           <div className="row two-col">
-            <label className="row-label">Face Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the centre of your webcam — the face layer only. 1.0× is the full frame, 3.0× is a tight crop. Independent from Background Zoom further down: you can tighten your face without pushing into the replacement scene.</Help></label>
+            <label className="row-label">Face Zoom {zoom.toFixed(1)}× <Help>Digitally zoom into the centre of your webcam — the face layer only. 1.0× is the full frame, 3.0× is a tight crop. Independent from Background Zoom: you can tighten your face without pushing into the replacement scene.</Help></label>
             <div className="row-ctrl">
               <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={(e) => setZoom(+e.target.value)} />
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">Auto-center <Help>Tracks your face inside the shape so you stay framed as you lean side to side or move closer / further from the camera. Uses the existing background-segmentation model — works with any background mode.</Help></label>
+            <div className="row-ctrl">
+              <label className="check inline">
+                <input
+                  type="checkbox"
+                  checked={autoCenter}
+                  onChange={(e) => setAutoCenter(e.target.checked)}
+                />
+                Track my face
+              </label>
+            </div>
+          </div>
+          <div className="row two-col">
+            <label className="row-label">
+              Face light {Math.round(faceLight)} <Help>Artificial fill-light that brightens and warms your face — like a soft ring light. Applied on top of any colour effect, in both the preview and the recording.</Help>
+            </label>
+            <div className="row-ctrl">
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={faceLight}
+                onChange={(e) => setFaceLight(+e.target.value)}
+              />
             </div>
           </div>
           <div className="row two-col">
@@ -1337,6 +1390,13 @@ export default function RecorderTab() {
               />
             </div>
           </div>
+        </section>
+
+        <section className="panel">
+          <h2>
+            <span className="step">3</span> Web Cam Background Settings
+            <Help>Replace, blur, or tint what's behind you. Mode picks whether to leave the room alone, blur it, or swap it for an image. The extra sliders fine-tune that layer without touching your face.</Help>
+          </h2>
           <div className="row two-col">
             <label className="row-label">Mode <Help>Off = raw camera feed (no segmentation). Blur = keep you sharp, blur your real room. Image = replace the background with a picked image. Requires the floating webcam overlay to be on.</Help></label>
             <div className="row-ctrl">
@@ -1437,7 +1497,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">2</span> Live Annotation
+            <span className="step">4</span> Live Annotation
             <Help>Color, shape and thickness used when you draw annotations on the screen during recording. Hold <b>Ctrl</b> and drag anywhere to draw — release Ctrl to click through to apps again.</Help>
           </h2>
           <div className="row two-col">
@@ -1511,7 +1571,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">3</span> Fixed Text
+            <span className="step">5</span> Fixed Text
             <Help>A permanent text label baked into every recorded frame. Useful for watermarks, lower-thirds, titles, or a fixed "LIVE" tag. Leave the text box blank to disable.</Help>
           </h2>
           <div className="row two-col">
@@ -1624,6 +1684,19 @@ export default function RecorderTab() {
                 </div>
               </div>
               <div className="row two-col">
+                <label className="row-label">Opacity {Math.round(fixedTextOpacity * 100)}% <Help>How solid the text is on top of the recorded frame. 100% is opaque; lower values let the scene show through — handy for subtle watermarks.</Help></label>
+                <div className="row-ctrl">
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={fixedTextOpacity}
+                    onChange={(e) => setFixedTextOpacity(+e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="row two-col">
                 <label className="row-label">Color <Help>Click a preset swatch, open the colour picker, or type a hex / rgba string. Picks are applied instantly to the preview above.</Help></label>
                 <div className="row-ctrl" style={{ flexWrap: 'wrap', gap: 6 }}>
                   {FIXED_TEXT_COLOR_PRESETS.map((hex) => (
@@ -1691,7 +1764,7 @@ export default function RecorderTab() {
 
         <section className="panel wide" style={{ ['--src-thumb' as any]: `${sourceThumbSize}px` }}>
           <h2>
-            <span className="step">4</span> Source
+            <span className="step">6</span> Source
             <Help>Pick which monitor or window to capture. You can also drag a <b>region</b> to record only part of the screen.</Help>
             <button
               className="h2-action"
@@ -1867,7 +1940,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">5</span> Audio
+            <span className="step">7</span> Audio
             <Help>Capture the sounds your computer is playing (games, videos, calls) and/or your microphone. Both are mixed together into the final video.</Help>
           </h2>
           <div className="row two-col">
@@ -1899,6 +1972,16 @@ export default function RecorderTab() {
               </div>
             </div>
           )}
+          <div className="row two-col">
+            <label className="row-label">Speaker (output) <Help>Which speaker or headphone the Player tab plays recordings through. Defaults to your system's default output. The recording itself is unaffected — this only routes playback audio.</Help></label>
+            <div className="row-ctrl">
+              <select value={speakerId ?? ''} onChange={(e) => setSpeakerId(e.target.value || undefined)}>
+                <option value="">Default speaker</option>
+                {speakers.map((s) => <option key={s.deviceId} value={s.deviceId}>{s.label || s.deviceId}</option>)}
+              </select>
+            </div>
+          </div>
+
           {includeMic && (
             <div className="row two-col">
               <label className="row-label">Voice changer <Help>Process the mic through a Web Audio pitch-shifter and optional effect chain before recording. "Custom pitch" unlocks the slider so you can dial the amount yourself. Applied at Start; change and restart to preview a different preset.</Help></label>
@@ -1930,7 +2013,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">6</span> Webcam
+            <span className="step">8</span> Webcam
             <Help>Overlay a live camera feed on top of your screen. A floating bubble appears on your desktop so you can see yourself, and it's baked into the final video at the position you pick. The master on/off switch lives at the top of step 1 — Web Cam Basic Settings.</Help>
           </h2>
           {!includeWebcam && (
@@ -1974,42 +2057,13 @@ export default function RecorderTab() {
                   </select>
                 </div>
               </div>
-              <div className="row two-col">
-                <label className="row-label">Auto-center <Help>Tracks your face inside the shape so you stay framed as you lean side to side or move closer / further from the camera. Uses the existing background-segmentation model — works with any background mode.</Help></label>
-                <div className="row-ctrl">
-                  <label className="check inline">
-                    <input
-                      type="checkbox"
-                      checked={autoCenter}
-                      onChange={(e) => setAutoCenter(e.target.checked)}
-                    />
-                    Track my face
-                  </label>
-                </div>
-              </div>
-              <div className="row two-col">
-                <label className="row-label" style={autoCenter ? { opacity: 0.5 } : undefined}>
-                  Face light {Math.round(faceLight)} <Help>Artificial fill-light that brightens and warms your face — like a soft ring light. Applied on top of any colour effect, in both the preview and the recording.</Help>
-                </label>
-                <div className="row-ctrl">
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={faceLight}
-                    disabled={autoCenter}
-                    onChange={(e) => setFaceLight(+e.target.value)}
-                  />
-                </div>
-              </div>
             </>
           )}
         </section>
 
         <section className="panel">
           <h2>
-            <span className="step">7</span> Floating Panel
+            <span className="step">9</span> Floating Panel
             <Help>How the floating webcam / HUD window behaves on your desktop while recording. These settings only affect the floating bubble — they don't appear in the recorded video. Only active while the webcam overlay is enabled; otherwise there's nothing floating to configure.</Help>
           </h2>
           <div className="row two-col">
@@ -2047,7 +2101,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">8</span> Recording FX
+            <span className="step">10</span> Recording FX
             <Help>Extra effects applied during recording. The cursor-zoom pans and zooms into the area around your mouse for tutorial-style videos. The idiot board shows notes only to you — they are hidden from the recording.</Help>
           </h2>
           <div className="row two-col">
@@ -2157,7 +2211,7 @@ export default function RecorderTab() {
 
         <section className="panel">
           <h2>
-            <span className="step">9</span> Save to
+            <span className="step">11</span> Save to
             <Help>Where finished recordings go. Defaults to your Desktop. Click <b>Change…</b> to pick another folder — your choice is remembered across sessions. Recordings are saved automatically as MP4; no prompt.</Help>
           </h2>
           <div className="row two-col">

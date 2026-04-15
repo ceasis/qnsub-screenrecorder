@@ -66,6 +66,14 @@ const api = {
   getDownloadsFolder: (): Promise<string> => ipcRenderer.invoke('settings:downloads-folder'),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke('settings:pick-folder'),
 
+  listRecordings: (root: string | null): Promise<Array<{ path: string; name: string; size: number; mtime: number; folder: string }>> =>
+    ipcRenderer.invoke('player:list', root),
+  revealRecording: (filePath: string): Promise<boolean> => ipcRenderer.invoke('player:reveal', filePath),
+  deleteRecording: (filePath: string): Promise<boolean> => ipcRenderer.invoke('player:delete', filePath),
+  openPlayerFolder: (folder?: string): Promise<boolean> => ipcRenderer.invoke('player:open-folder', folder),
+  trimRecording: (opts: { path: string; startSec: number; endSec: number }): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('player:trim', opts),
+
   showError: (msg: string) => ipcRenderer.invoke('dialog:error', msg),
   toggleDevTools: () => ipcRenderer.invoke('devtools:toggle'),
   quitApp: () => ipcRenderer.invoke('app:quit'),

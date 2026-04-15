@@ -63,6 +63,37 @@ function runFfmpeg(bin: string, args: string[], onProgress?: (pct: number) => vo
   });
 }
 
+/**
+ * Stream-copy trim. Given an input video and a [startSec, endSec] range,
+ * write a new file containing only that range without re-encoding. Fast
+ * (seconds) but keyframe-aligned — the actual cut snaps to the nearest
+ * keyframe at or before startSec. That's the standard trade-off for a
+ * "fast trim" in every video editor; re-encoding would be frame-accurate
+ * but take minutes on a long clip.
+ *
+ * Pass startSec = 0 to drop everything after endSec.
+ * Pass endSec = Infinity (or <= 0) to drop everything before startSec.
+ */
+export async function trimVideo(
+  inputPath: string,
+  outputPath: string,
+  startSec: number,
+  endSec: number
+): Promise<void> {
+  const bin = resolveFfmpegPath();
+  const args: string[] = ['-y', '-hide_banner'];
+  // Seek BEFORE -i for fast input seek (keyframe-aligned).
+  if (startSec > 0) args.push('-ss', startSec.toFixed(3));
+  args.push('-i', inputPath);
+  if (isFinite(endSec) && endSec > 0) {
+    // -to is an absolute timestamp in the input, so subtract the
+    // already-seeked startSec to get the relative end instead.
+    args.push('-t', Math.max(0.05, endSec - Math.max(0, startSec)).toFixed(3));
+  }
+  args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart', outputPath);
+  await runFfmpeg(bin, args);
+}
+
 export async function remuxWebmToMp4(
   inputPath: string,
   outputPath: string,

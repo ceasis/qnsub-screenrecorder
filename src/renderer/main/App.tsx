@@ -2,13 +2,28 @@ import React, { useEffect, useState } from 'react';
 import RecorderTab from './Recorder';
 import EditorTab from './Editor';
 import FaceBlurTab from './FaceBlur';
+import PlayerTab from './Player';
 import HelpModal from './HelpModal';
 
-type Tab = 'recorder' | 'editor' | 'faceblur';
+type Tab = 'recorder' | 'player' | 'editor' | 'faceblur';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('recorder');
   const [helpOpen, setHelpOpen] = useState(false);
+  // Path the Player tab should auto-select the next time it mounts.
+  // Set by the Recorder via a DOM CustomEvent after a save completes,
+  // then cleared by the PlayerTab once it has honoured the request.
+  const [playerAutoSelect, setPlayerAutoSelect] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onSaved = (e: Event) => {
+      const detail = (e as CustomEvent<{ path?: string }>).detail;
+      if (detail?.path) setPlayerAutoSelect(detail.path);
+      setTab('player');
+    };
+    window.addEventListener('qnsub:recording-saved', onSaved);
+    return () => window.removeEventListener('qnsub:recording-saved', onSaved);
+  }, []);
 
   // Keep the floating webcam preview tied to the Recorder tab only.
   // The webcam window is intentionally NOT hidden when the main window
@@ -43,6 +58,19 @@ export default function App() {
               </svg>
             </span>
             Screen Recorder
+          </button>
+          <button
+            className={`tab ${tab === 'player' ? 'sel' : ''}`}
+            onClick={() => setTab('player')}
+            title="Play back your recordings"
+          >
+            <span className="tab-icon" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <polygon points="10 9 16 12 10 15 10 9" fill="currentColor" stroke="none" />
+              </svg>
+            </span>
+            Player
           </button>
           <button
             className={`tab ${tab === 'faceblur' ? 'sel' : ''}`}
@@ -130,6 +158,14 @@ export default function App() {
       <div className={`tab-panel ${tab === 'recorder' ? 'active' : 'inactive'}`}>
         <RecorderTab />
       </div>
+      {tab === 'player' && (
+        <div className="tab-panel active">
+          <PlayerTab
+            autoSelectPath={playerAutoSelect}
+            onAutoSelectHandled={() => setPlayerAutoSelect(null)}
+          />
+        </div>
+      )}
       <div className={`tab-panel ${tab === 'faceblur' ? 'active' : 'inactive'}`}>
         <FaceBlurTab />
       </div>

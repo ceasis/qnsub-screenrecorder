@@ -30,3 +30,8 @@ export async function listMics(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((d) => d.kind === 'audioinput');
 }
+
+export async function listSpeakers(): Promise<MediaDeviceInfo[]> {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter((d) => d.kind === 'audiooutput');
+}

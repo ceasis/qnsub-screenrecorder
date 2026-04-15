@@ -61,5 +61,33 @@ export const DID_YOU_KNOW_TIPS: string[] = [
   'Reinstalling a new version keeps all your settings — they live in %APPDATA%, which the installer never touches.',
   'Click the blue Help button in the top-right for an in-app guide with a section per feature.',
   'Click the ☕ Coffee button in the top-right to tip the maintainer via paypal.me/qnsub if QNSub Studio saved you time.',
-  'The app auto-increments its version on every build, so the installer filename always tells you exactly what you\'re running.'
+  'The app auto-increments its version on every build, so the installer filename always tells you exactly what you\'re running.',
+
+  // ---- Player tab ----
+  'The Player tab lists every recording in your save folder with a preview thumbnail, duration, resolution, and fps.',
+  'After you finish recording, the app auto-jumps to the Player tab and starts playing the clip — no manual click needed.',
+  'In the Player tab, press Space or K to play / pause, and J / L to jump back and forward 10 seconds like YouTube.',
+  'Use the , and . keys in the Player tab to step one frame backward or forward — great for pinpointing the exact cut.',
+  'Hit F in the Player tab to go fullscreen, M to mute, and 0 to jump back to the very start of the clip.',
+  'The Player tab\'s ✂ Trim start / Trim end ✂ buttons drop everything before or after the current frame and save a new file — no re-encode, finishes in seconds.',
+  'Trimming a trimmed clip replaces the old timestamp instead of stacking, so filenames stay short no matter how many passes you do.',
+  '📷 Snapshot in the Player exports the current frame as a PNG you can drop straight into a thumbnail, doc, or slide.',
+  'The 🖥 Desktop button at the top of the Player list jumps straight to your Desktop folder in your file browser.',
+  'Playback speed in the Player goes from 0.25× (slow-mo review) all the way up to 4× (power-skim long recordings).',
+
+  // ---- New settings & panels ----
+  'The Start countdown can be set to Off, 1, 2, 3, 5, or 10 seconds — or swapped to a subtle progress-bar style instead of the big 3-2-1 ring.',
+  'The Fixed Text overlay has an opacity slider, so you can burn in subtle watermarks or bold lower-thirds with the same control.',
+  'The Web Cam settings are split across three panels — Basic (shape / size), Face (zoom / effect / blur / light), and Background (mode / blur / zoom / image) — so you can dial each layer independently.',
+  'Face Blur, Face Zoom, Face Effect, and Face Light all apply only to your face — the background layer is never tinted or blurred by them.',
+
+  // ---- Deeper features ----
+  'The live preview in the Recorder tab is rendered on a hidden 1920×1080 canvas and captured at 30 fps — what you see is exactly what gets recorded.',
+  'The cursor-zoom crop has its own "follow delay" slider so quick mouse flicks don\'t trigger a dizzying chase — only deliberate moves do.',
+  'You can rotate through random Fixed Text styles with one click — the randomizer picks a font, colour, weight, and effect without touching your opacity or position.',
+  'Every setting you change — camera, mic, voice preset, save folder, face shape, countdown — is remembered across sessions automatically via localStorage.',
+
+  // ---- Meta / delight ----
+  'This "Did you know?" tip panel rotates through 60+ tips — click Next to cycle through them and discover features you\'ve never used.',
+  'The splash screen shows a random tip every time you launch the app, so you always pick up something new on startup.'
 ];
