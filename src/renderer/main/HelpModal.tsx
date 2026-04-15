@@ -236,6 +236,54 @@ const SECTIONS: Section[] = [
           your own build of. No telemetry, no accounts, no cloud
           round-trips.
         </p>
+        <div
+          style={{
+            margin: '12px 0 18px',
+            padding: '14px 16px',
+            borderRadius: 10,
+            border: '1px solid rgba(255, 200, 60, 0.4)',
+            background: 'linear-gradient(160deg, rgba(255, 200, 60, 0.09) 0%, rgba(255, 200, 60, 0.03) 100%)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12
+          }}
+        >
+          <span style={{ fontSize: 22, lineHeight: 1 }}>⭐</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, color: '#ffd96b', marginBottom: 4 }}>
+              Please star the repo on GitHub
+            </div>
+            <div style={{ fontSize: 13, color: '#c7ced9', lineHeight: 1.55 }}>
+              It costs nothing, takes one click, and is the single biggest
+              thing you can do to help. Stars drive GitHub's discovery
+              algorithm — every extra star puts QNSub Studio in front of
+              more people who need a free, open-source screen recorder.
+              It's also the one metric the maintainer actually watches to
+              decide how much time to pour into new features.
+            </div>
+            <a
+              href="https://github.com/ceasis/qnsub-screenrecorder"
+              target="_blank"
+              rel="noopener"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                marginTop: 10,
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: '1px solid rgba(255, 200, 60, 0.55)',
+                background: 'rgba(255, 200, 60, 0.12)',
+                color: '#ffd96b',
+                fontWeight: 600,
+                fontSize: 13,
+                textDecoration: 'none'
+              }}
+            >
+              ⭐ Star on GitHub
+            </a>
+          </div>
+        </div>
         <h4>Project links</h4>
         <ul>
           <li>

@@ -258,7 +258,20 @@
     .how-card ol li { margin-bottom: 10px; }
     .how-card ol li:last-child { margin-bottom: 0; }
 
-    /* ---- Coffee cards ---- */
+    /* ---- Coffee grid + cards ---- */
+    .coffee-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      max-width: 820px;
+      margin: 0 auto;
+    }
+    @media (max-width: 720px) {
+      .coffee-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 440px) {
+      .coffee-grid { grid-template-columns: 1fr; }
+    }
     .coffee-card {
       display: flex;
       flex-direction: column;
@@ -335,6 +348,7 @@
       <a href="#download">Download</a>
       <a href="#open-source">Open source</a>
       <a href="#build">Build</a>
+      <a href="#star">⭐ Star</a>
       <a href="#coffee">☕ Coffee</a>
       <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">GitHub</a>
     </div>
@@ -576,6 +590,27 @@
   </div>
 </section>
 
+<section class="section" id="star" style="padding-top: 20px; padding-bottom: 20px;">
+  <div class="wrap">
+    <div style="max-width: 820px; margin: 0 auto; padding: 22px 26px; border-radius: 16px; border: 1px solid rgba(255, 200, 60, 0.35); background: linear-gradient(160deg, rgba(255, 200, 60, 0.08) 0%, rgba(255, 200, 60, 0.02) 100%); display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+      <div style="font-size: 44px; line-height: 1;">⭐</div>
+      <div style="flex: 1 1 300px; min-width: 260px;">
+        <h3 style="margin: 0 0 6px; color: #ffd96b; font-size: 20px;">Please star the repo on GitHub</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 14.5px;">
+          It costs nothing, takes one click, and is the single biggest thing you can do to help.
+          Stars drive GitHub's discovery algorithm — every extra star puts QNSub Studio in front of
+          more people who need a free, open-source screen recorder. It's also the one metric the
+          maintainer actually watches to decide how much time to pour into new features.
+        </p>
+      </div>
+      <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener"
+         style="display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px; border: 1px solid rgba(255, 200, 60, 0.55); background: rgba(255, 200, 60, 0.14); color: #ffd96b; font-weight: 700; font-size: 15px; text-decoration: none; white-space: nowrap;">
+        ⭐ Star on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
 <section class="section" id="coffee" style="background: linear-gradient(180deg, transparent 0%, rgba(225, 29, 72, 0.06) 100%);">
   <div class="wrap">
     <div class="section-title">
@@ -586,7 +621,7 @@
         subscription — a coffee tip keeps the updates coming and the maintainer caffeinated.
       </p>
     </div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; max-width: 960px; margin: 0 auto;">
+    <div class="coffee-grid">
       <a href="https://paypal.me/qnsub/5USD" target="_blank" rel="noopener" class="coffee-card">
         <span class="coffee-emoji">☕</span>
         <span class="coffee-amount">$5</span>

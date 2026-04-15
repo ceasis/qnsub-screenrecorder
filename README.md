@@ -17,6 +17,8 @@ ship your own build. No telemetry, no accounts, no cloud round-trips.
 - **Author**: [@choloasis on Twitter/X](https://twitter.com/choloasis)
 - **Buy me a coffee** ☕: [paypal.me/qnsub](https://paypal.me/qnsub) — if QNSub Studio saved you time, a small tip keeps the updates coming. No pressure, no paywall.
 
+> ⭐ **If this project is useful to you, please [star the repo on GitHub](https://github.com/ceasis/qnsub-screenrecorder)** — it costs nothing, takes one click, and is the single biggest thing you can do to help. Stars drive GitHub's discovery algorithm, so every extra star puts QNSub Studio in front of more people who need a free, open-source screen recorder. It's also the only metric I actually watch to decide how much time to pour into new features.
+
 ## Download the latest build
 
 If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer from Google Drive:
