@@ -34,16 +34,16 @@ QNSub Studio is one of several tools built in public. If you like how this one i
 
 ## Download the latest build
 
-If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer from Google Drive:
+If you just want to **use** QNSub Studio without building from source, grab the latest pre-built installer:
 
-- **Windows** — [QNSub Studio Setup (.exe) on Google Drive](https://drive.google.com/file/d/1WiiG7oKtfbUybBLH0OxqdwN5yZuUijJY/view?usp=sharing)
+- **Windows** — [Download QNSub Studio Setup 0.1.4 (.exe)](https://pub-85c4f8fe2d3341149c5f19d57efdcc7c.r2.dev/QNSub-ScreenRecorder-Setup-0.1.4.exe)
 - **macOS** — coming soon (ping the maintainer if you need a build)
 
 The installer is **not** code-signed yet, so Windows SmartScreen will show a blue "Windows protected your PC" warning on first launch. Click **More info → Run anyway** to proceed — it's a one-time prompt, the installer is safe, and the warning disappears once a handful of users have installed it and Microsoft's reputation system catches up. If you want zero warnings, build from source (instructions further down).
 
 ### Install on Windows
 
-1. Open the Google Drive link above and click **Download** (the arrow icon at the top). Google Drive may show a "can't scan this file for viruses" notice because the installer is larger than the scan limit — click **Download anyway**.
+1. Click the download link above — the `.exe` installer downloads directly from the project's Cloudflare R2 bucket.
 2. Run the downloaded `QNSub Screen Recorder Setup X.Y.Z.exe`.
 3. If Windows SmartScreen appears, click **More info → Run anyway**.
 4. Follow the NSIS installer (pick install location, create shortcuts).

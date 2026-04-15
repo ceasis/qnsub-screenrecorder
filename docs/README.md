@@ -32,8 +32,8 @@ That's it. Every future push to `main` that changes anything under
 
 ## Editing the page
 
-- **Change the download URL** — search for `1WiiG7oKtfbUybBLH0OxqdwN5yZuUijJY`
-  in `index.html` and replace both hits with the new Google Drive
+- **Change the download URL** — search for `r2.dev/QNSub%20Screen%20Recorder%20Setup`
+  in `index.html` and replace both hits with the new Cloudflare R2
   file ID (or a different URL entirely).
 - **Change the GitHub repo URL** — search for `ceasis/qnsub-screenrecorder`
   and replace with your actual user/repo. There are ~6 occurrences

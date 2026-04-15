@@ -1,6 +1,6 @@
 {
   "name": "qnsub-screenrecorder",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Full-featured cross-platform screen recorder with webcam overlay, annotations, and system audio",
   "main": "dist/main/main.js",
   "author": "QNSub",
@@ -71,7 +71,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "QNSub-ScreenRecorder-Setup-${version}.${ext}"
     },
     "mac": {
       "target": "dmg",
