@@ -99,8 +99,8 @@ export function createIdiotBoardWindow(): BrowserWindow {
  * window fires `ready-to-show`.
  */
 export function createSplashWindow(): BrowserWindow {
-  const width = 440;
-  const height = 340;
+  const width = 506;
+  const height = 391;
   const primary = screen.getPrimaryDisplay();
   const win = new BrowserWindow({
     width,
@@ -188,14 +188,16 @@ export function createSplashWindow(): BrowserWindow {
     color: #ffffff;
   }
   .title {
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 700;
     letter-spacing: 0.2px;
     margin: 6px 0 0;
+    color: #ffffff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
   .subtitle {
-    font-size: 12.5px;
-    color: #6b7380;
+    font-size: 14px;
+    color: #9aa3b2;
     margin: 0;
     font-weight: 500;
   }
@@ -230,29 +232,31 @@ export function createSplashWindow(): BrowserWindow {
     100% { left: 100%; }
   }
   .credits {
-    margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid #262d36;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #2d3440;
     width: 100%;
     text-align: center;
-    font-size: 11px;
-    color: #6b7380;
+    font-size: 13px;
+    color: #9aa3b2;
     letter-spacing: 0.1px;
-    line-height: 1.8;
+    line-height: 2;
   }
   .credits .os {
-    color: #e6edf3;
+    color: #ffffff;
     font-weight: 600;
+    font-size: 14px;
   }
   .credits .sep {
-    color: #30363d;
+    color: #4a5160;
     margin: 0 6px;
   }
   .credits a {
-    color: #8b949e;
+    color: #c7ced9;
     font-size: 13.2px;
+    font-weight: 500;
     text-decoration: none;
-    border-bottom: 1px dotted #3a424e;
+    border-bottom: 1px dotted #5a6170;
     padding-bottom: 1px;
     transition: color 0.12s ease, border-color 0.12s ease;
     cursor: pointer;
@@ -282,6 +286,8 @@ export function createSplashWindow(): BrowserWindow {
       <a href="https://ceasis.github.io/qnsub-screenrecorder/" target="_blank" rel="noopener">website</a>
       <span class="sep">·</span>
       <a href="https://twitter.com/choloasis" target="_blank" rel="noopener">@choloasis</a>
+      <br/>
+      <a href="https://paypal.me/qnsub" target="_blank" rel="noopener">☕ buy me a coffee · paypal.me/qnsub</a>
     </div>
   </div>
 </body>

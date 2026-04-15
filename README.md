@@ -15,6 +15,7 @@ ship your own build. No telemetry, no accounts, no cloud round-trips.
 - **Source**: https://github.com/ceasis/qnsub-screenrecorder
 - **Website**: https://ceasis.github.io/qnsub-screenrecorder/
 - **Author**: [@choloasis on Twitter/X](https://twitter.com/choloasis)
+- **Buy me a coffee** ☕: [paypal.me/qnsub](https://paypal.me/qnsub) — if QNSub Studio saved you time, a small tip keeps the updates coming. No pressure, no paywall.
 
 ## Download the latest build
 
