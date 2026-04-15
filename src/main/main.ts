@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol, Tray, Menu, nativeImage, ipcMain } from 'electron';
+import { app, BrowserWindow, protocol, Tray, Menu, nativeImage, ipcMain, shell } from 'electron';
 import { existsSync } from 'fs';
 import * as fs from 'fs';
 import { join } from 'path';
@@ -104,6 +104,13 @@ function createTray() {
   tray.setToolTip('QNSub Studio');
   const menu = Menu.buildFromTemplate([
     { label: 'Show QNSub Studio', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: 'Buy me a coffee \u2615',
+      click: () => {
+        shell.openExternal('https://paypal.me/qnsub').catch(() => {});
+      }
+    },
     { type: 'separator' },
     {
       label: 'Quit',

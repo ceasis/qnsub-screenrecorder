@@ -107,8 +107,19 @@ html, body, #root {
   color: #fff;
   border-color: rgba(255, 90, 90, 0.6);
 }
-.tab.tab-help {
+.tab.tab-coffee {
   margin-left: auto;
+  color: #ffb86b;
+  border-color: rgba(255, 184, 107, 0.45);
+  background: rgba(255, 184, 107, 0.10);
+}
+.tab.tab-coffee:hover {
+  background: rgba(255, 184, 107, 0.22);
+  color: #fff;
+  border-color: rgba(255, 184, 107, 0.65);
+}
+.tab.tab-help {
+  margin-left: 6px;
   color: #6fb6ff;
   border-color: rgba(111, 182, 255, 0.45);
   background: rgba(111, 182, 255, 0.10);

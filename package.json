@@ -5,6 +5,10 @@
   "main": "dist/main/main.js",
   "author": "QNSub",
   "license": "MIT",
+  "funding": {
+    "type": "paypal",
+    "url": "https://paypal.me/qnsub"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",

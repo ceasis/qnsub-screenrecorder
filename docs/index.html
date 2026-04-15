@@ -258,6 +258,43 @@
     .how-card ol li { margin-bottom: 10px; }
     .how-card ol li:last-child { margin-bottom: 0; }
 
+    /* ---- Coffee cards ---- */
+    .coffee-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 22px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: linear-gradient(160deg, var(--bg-card) 0%, var(--bg) 100%);
+      color: var(--text);
+      text-decoration: none;
+      transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .coffee-card:hover {
+      text-decoration: none;
+      border-color: var(--accent);
+      transform: translateY(-3px);
+      box-shadow: 0 12px 28px rgba(225, 29, 72, 0.28);
+    }
+    .coffee-card .coffee-emoji {
+      font-size: 26px;
+      line-height: 1;
+    }
+    .coffee-card .coffee-amount {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--accent-bright);
+      letter-spacing: -0.01em;
+    }
+    .coffee-card .coffee-label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
     /* ---- Footer ---- */
     .footer {
       border-top: 1px solid var(--border);
@@ -298,6 +335,7 @@
       <a href="#download">Download</a>
       <a href="#open-source">Open source</a>
       <a href="#build">Build</a>
+      <a href="#coffee">☕ Coffee</a>
       <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
@@ -535,6 +573,56 @@
         </ol>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="section" id="coffee" style="background: linear-gradient(180deg, transparent 0%, rgba(225, 29, 72, 0.06) 100%);">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>Buy me a coffee ☕</h2>
+      <p>
+        QNSub Studio is free and always will be. No paywall, no "unlock premium" screen,
+        nothing held back. If it saved you time — or the cost of a screen-recorder
+        subscription — a coffee tip keeps the updates coming and the maintainer caffeinated.
+      </p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; max-width: 960px; margin: 0 auto;">
+      <a href="https://paypal.me/qnsub/5USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕</span>
+        <span class="coffee-amount">$5</span>
+        <span class="coffee-label">1 day of coffee</span>
+      </a>
+      <a href="https://paypal.me/qnsub/20USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕☕</span>
+        <span class="coffee-amount">$20</span>
+        <span class="coffee-label">1 week of coffee</span>
+      </a>
+      <a href="https://paypal.me/qnsub/50USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕☕☕</span>
+        <span class="coffee-amount">$50</span>
+        <span class="coffee-label">1 month of coffee</span>
+      </a>
+      <a href="https://paypal.me/qnsub/120USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕×4</span>
+        <span class="coffee-amount">$120</span>
+        <span class="coffee-label">3 months of coffee</span>
+      </a>
+      <a href="https://paypal.me/qnsub/200USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕×5</span>
+        <span class="coffee-amount">$200</span>
+        <span class="coffee-label">6 months of coffee</span>
+      </a>
+      <a href="https://paypal.me/qnsub/365USD" target="_blank" rel="noopener" class="coffee-card">
+        <span class="coffee-emoji">☕×6</span>
+        <span class="coffee-amount">$365</span>
+        <span class="coffee-label">12 months of coffee</span>
+      </a>
+    </div>
+    <p style="text-align: center; margin-top: 22px; font-size: 14px; color: var(--dim);">
+      Prefer a custom amount? Open
+      <a href="https://paypal.me/qnsub" target="_blank" rel="noopener" style="color: var(--accent-bright); border-bottom: 1px dotted var(--accent-bright);">paypal.me/qnsub</a>
+      and type your own.
+    </p>
   </div>
 </section>
 

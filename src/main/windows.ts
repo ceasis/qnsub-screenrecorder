@@ -337,6 +337,16 @@ export function createMainWindow(): BrowserWindow {
     win.show();
   });
 
+  // Route `<a target="_blank">` clicks (help modal, support links, etc.)
+  // to the user's default browser instead of opening a second Electron
+  // window.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+
   win.loadURL(rendererUrl('main'));
 
   return win;

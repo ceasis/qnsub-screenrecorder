@@ -108,7 +108,7 @@ const SECTIONS: Section[] = [
             the bubble. The HUD is invisible to screen capture so it
             doesn't appear in your recordings.</li>
         </ul>
-        <h4>Auto-framing &amp; behavior</h4>
+        <h4>Auto-framing & behavior</h4>
         <ul>
           <li><b>Auto-center</b> tracks the segmentation-mask centroid and
             keeps your face in the middle of the shape automatically.
@@ -224,8 +224,122 @@ const SECTIONS: Section[] = [
     )
   },
   {
+    id: 'support',
+    title: 'Support & about',
+    icon: <span>☕</span>,
+    body: (
+      <>
+        <p>
+          <b>QNSub Studio</b> is 100% open source — every pixel the app
+          composites, every bit of audio it processes, every frame it
+          encodes is driven by code you can read, audit, fork, and ship
+          your own build of. No telemetry, no accounts, no cloud
+          round-trips.
+        </p>
+        <h4>Project links</h4>
+        <ul>
+          <li>
+            <b>Source code</b> —{' '}
+            <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">
+              github.com/ceasis/qnsub-screenrecorder
+            </a>
+          </li>
+          <li>
+            <b>Website</b> —{' '}
+            <a href="https://ceasis.github.io/qnsub-screenrecorder/" target="_blank" rel="noopener">
+              ceasis.github.io/qnsub-screenrecorder
+            </a>
+          </li>
+          <li>
+            <b>Report an issue</b> —{' '}
+            <a href="https://github.com/ceasis/qnsub-screenrecorder/issues" target="_blank" rel="noopener">
+              GitHub issues
+            </a>
+          </li>
+        </ul>
+        <h4>Author</h4>
+        <p>
+          Built in public by{' '}
+          <a href="https://twitter.com/choloasis" target="_blank" rel="noopener">
+            @choloasis on Twitter / X
+          </a>
+          . Updates, feature demos, and the occasional "why this took
+          three attempts to get right" post-mortem ship there first.
+        </p>
+        <h4>Buy me a coffee ☕</h4>
+        <p>
+          QNSub Studio is free and always will be. If it saved you time
+          or money on a screen-recorder subscription, tossing a coffee
+          tip keeps the updates coming and the maintainer caffeinated.
+          No pressure, no paywall, no "unlock premium features" screen —
+          everything is already unlocked.
+        </p>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: 10,
+            margin: '14px 0 10px'
+          }}
+        >
+          {[
+            { label: '1 day', amount: 5, emoji: '☕' },
+            { label: '1 week', amount: 20, emoji: '☕☕' },
+            { label: '1 month', amount: 50, emoji: '☕☕☕' },
+            { label: '3 months', amount: 120, emoji: '☕×4' },
+            { label: '6 months', amount: 200, emoji: '☕×5' },
+            { label: '12 months', amount: 365, emoji: '☕×6' }
+          ].map((t) => (
+            <a
+              key={t.label}
+              href={`https://paypal.me/qnsub/${t.amount}USD`}
+              target="_blank"
+              rel="noopener"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                padding: '14px 10px',
+                borderRadius: 10,
+                border: '1px solid #262d36',
+                background: 'linear-gradient(160deg, #161b22 0%, #0d1117 100%)',
+                color: '#e6edf3',
+                textDecoration: 'none',
+                transition: 'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#e11d48';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 8px 20px rgba(225, 29, 72, 0.25)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#262d36';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <span style={{ fontSize: 20 }}>{t.emoji}</span>
+              <span style={{ fontWeight: 700, fontSize: 15, color: '#ff6b7a' }}>${t.amount}</span>
+              <span style={{ fontSize: 12, color: '#8b949e' }}>{t.label} of coffee</span>
+            </a>
+          ))}
+        </div>
+        <p className="muted" style={{ fontSize: 12 }}>
+          Prefer a custom amount? Just open{' '}
+          <a href="https://paypal.me/qnsub" target="_blank" rel="noopener">
+            paypal.me/qnsub
+          </a>
+          {' '}and type your own.
+        </p>
+      </>
+    )
+  },
+  {
     id: 'tips',
-    title: 'Tips &amp; troubleshooting',
+    title: 'Tips & troubleshooting',
     icon: <span>💡</span>,
     body: (
       <>
@@ -263,7 +377,7 @@ export default function HelpModal({ onClose }: { onClose: () => void }) {
     <div className="help-modal-backdrop" onClick={onClose}>
       <div className="help-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Help">
         <header className="help-header">
-          <h2>QNSub Studio — Help &amp; features</h2>
+          <h2>QNSub Studio — Help & features</h2>
           <button className="help-close" onClick={onClose} aria-label="Close help" title="Close (Esc)">×</button>
         </header>
         <div className="help-body">
