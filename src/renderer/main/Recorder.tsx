@@ -1349,7 +1349,7 @@ export default function RecorderTab() {
               <div className="row two-col">
                 <label className="row-label">Samples <Help>Built-in background images bundled with the app. Click one to use it as your background. Tap again or pick another to switch.</Help></label>
                 <div className="row-ctrl bg-samples">
-                  {bgSamples.length === 0 && <span className="muted">No samples found in <code>sample-background/</code>.</span>}
+                  {bgSamples.length === 0 && <span className="muted">No samples found in <code>build/sample-background/</code>.</span>}
                   {bgSamples.map((s) => {
                     const active = bgImageData === s.dataUrl;
                     return (

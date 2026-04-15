@@ -4,9 +4,9 @@
 //   build/icon.svg  — the vector source (editable by hand)
 //   build/icon.png  — 1024×1024 master PNG (used by electron-builder)
 //   build/icon.ico  — multi-resolution ICO for Windows
-//   tray-icon.png   — 256×256 tray icon (overwrites the old flat red one)
+//   build/tray-icon.png — 256×256 tray icon (overwrites the old flat red one)
 //
-// Run with: `node scripts/make-icon.mjs`.
+// Run with: `node build/make-icon.mjs`.
 
 import sharp from 'sharp';
 import pngToIco from 'png-to-ico';
@@ -99,7 +99,7 @@ console.log('wrote build/icon.ico (sizes:', icoSizes.join(', ') + ')');
 // Tray icon — a smaller variant used by Tray in the main process.
 // The tray API expects a square PNG; 256 is fine on all platforms.
 const tray = await sharp(Buffer.from(svg)).resize(256, 256).png().toBuffer();
-writeFileSync(resolve(root, 'tray-icon.png'), tray);
-console.log('wrote tray-icon.png (256×256)');
+writeFileSync(resolve(buildDir, 'tray-icon.png'), tray);
+console.log('wrote build/tray-icon.png (256×256)');
 
 console.log('done.');

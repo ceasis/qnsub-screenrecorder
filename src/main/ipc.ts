@@ -545,20 +545,20 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   });
 
   // ---------- Background image samples ----------
-  // Reads the `sample-background/` directory next to the app and hands
-  // back each image as a data URL so the renderer can drop it straight
-  // into an <img src> or the compositor's bgImage path without needing
-  // a custom protocol. Runs on every call (fast, the folder has only
-  // a handful of small files) so hot-adding new samples during dev
+  // Reads the `build/sample-background/` directory next to the app and
+  // hands back each image as a data URL so the renderer can drop it
+  // straight into an <img src> or the compositor's bgImage path without
+  // needing a custom protocol. Runs on every call (fast, the folder has
+  // only a handful of small files) so hot-adding new samples during dev
   // Just Works without an app restart.
   ipcMain.handle('bg:list-samples', async () => {
     // Try a few likely locations so this works in dev (cwd = project
     // root) and in packaged builds (files under resources/).
     const candidates = [
-      join(process.cwd(), 'sample-background'),
-      join(app.getAppPath(), 'sample-background'),
+      join(process.cwd(), 'build', 'sample-background'),
+      join(app.getAppPath(), 'build', 'sample-background'),
       join(process.resourcesPath || '', 'sample-background'),
-      join(__dirname, '..', '..', 'sample-background')
+      join(__dirname, '..', '..', 'build', 'sample-background')
     ];
     let dir: string | null = null;
     for (const c of candidates) {

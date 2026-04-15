@@ -15,9 +15,9 @@
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "bump": "npm --no-git-tag-version version patch",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test": "vitest run --config tests/vitest.config.mts",
+    "test:watch": "vitest --config tests/vitest.config.mts",
+    "test:coverage": "vitest run --coverage --config tests/vitest.config.mts",
     "dist": "npm run bump && npm run build && electron-builder -mw",
     "dist:win": "npm run bump && npm run build && electron-builder --win nsis",
     "dist:mac": "npm run bump && npm run build && electron-builder --mac dmg"
@@ -55,7 +55,7 @@
     "files": [
       "dist/**",
       "resources/**",
-      "sample-background/**",
+      "build/sample-background/**",
       "build/tray-icon.png",
       "package.json"
     ],
