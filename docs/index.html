@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QNSub Studio — Screen recorder + face-cam studio for Windows</title>
+  <meta name="description" content="Full-featured cross-platform screen recorder with webcam overlay, background segmentation, face blur, annotations, voice changer, and live text overlays. Built with Electron + React + TypeScript." />
+  <meta name="theme-color" content="#0e1116" />
+  <meta property="og:title" content="QNSub Studio" />
+  <meta property="og:description" content="Screen recorder + face-cam studio with background replacement, face blur, annotations, voice changer, and a live text overlay. Free and open source." />
+  <meta property="og:type" content="website" />
+
+  <style>
+    :root {
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --border: #262d36;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --dim: #6b7380;
+      --accent: #e11d48;
+      --accent-bright: #ff3d5a;
+      --accent-dark: #9f1239;
+      --blue: #3b82f6;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html {
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    h1, h2, h3 { margin: 0 0 .5em; line-height: 1.2; }
+    h1 { font-size: clamp(34px, 5vw, 56px); font-weight: 800; letter-spacing: -0.02em; }
+    h2 { font-size: clamp(24px, 3vw, 34px); font-weight: 700; letter-spacing: -0.01em; }
+    h3 { font-size: 18px; font-weight: 600; }
+    p { margin: 0 0 1em; color: var(--muted); }
+    a { color: var(--text); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, kbd {
+      font-family: "JetBrains Mono", "Fira Code", "Consolas", ui-monospace, monospace;
+      font-size: 0.9em;
+      background: #0a0d13;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    kbd { font-weight: 600; }
+    .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+    /* ---- Top nav ---- */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(12px);
+      background: rgba(13, 17, 23, 0.75);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      max-width: 1060px;
+      margin: 0 auto;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .brand .logo-mini {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 55%, var(--accent-dark) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .brand .logo-mini svg { width: 16px; height: 16px; color: #fff; }
+    .nav-links { display: flex; gap: 22px; font-size: 14px; }
+    .nav-links a { color: var(--muted); }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    @media (max-width: 640px) {
+      .nav-links { display: none; }
+    }
+
+    /* ---- Hero ---- */
+    .hero {
+      padding: 96px 0 80px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -20%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 900px;
+      height: 900px;
+      background: radial-gradient(circle, rgba(225, 29, 72, 0.18) 0%, transparent 55%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .hero > * { position: relative; z-index: 1; }
+    .hero .logo-big {
+      width: 128px;
+      height: 128px;
+      border-radius: 30px;
+      margin: 0 auto 28px;
+      background: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 55%, var(--accent-dark) 100%);
+      box-shadow: 0 25px 60px rgba(225, 29, 72, 0.35), 0 1px 0 rgba(255,255,255,0.1) inset;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .hero .logo-big::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.35) 0%, transparent 55%);
+    }
+    .hero .logo-big svg { width: 74px; height: 74px; color: #fff; position: relative; z-index: 1; }
+    .hero .tagline {
+      font-size: clamp(16px, 2vw, 20px);
+      max-width: 640px;
+      margin: 0 auto 36px;
+      color: var(--muted);
+    }
+    .cta-row {
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 26px;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+      cursor: pointer;
+    }
+    .btn:hover { text-decoration: none; transform: translateY(-1px); }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-bright) 0%, var(--accent) 100%);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(225, 29, 72, 0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 12px 32px rgba(225, 29, 72, 0.45);
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-ghost:hover {
+      border-color: #3a424e;
+      background: #161b22;
+    }
+    .btn svg { width: 18px; height: 18px; }
+    .meta-row {
+      margin-top: 22px;
+      font-size: 13px;
+      color: var(--dim);
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .meta-row a { color: var(--dim); border-bottom: 1px dotted var(--dim); }
+
+    /* ---- Feature grid ---- */
+    .section { padding: 72px 0; border-top: 1px solid var(--border); }
+    .section-title {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    .section-title h2 { margin-bottom: 12px; }
+    .section-title p { max-width: 560px; margin: 0 auto; }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .feature {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      transition: border-color .12s ease, transform .12s ease;
+    }
+    .feature:hover {
+      border-color: #3a424e;
+      transform: translateY(-2px);
+    }
+    .feature .icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: rgba(225, 29, 72, 0.12);
+      border: 1px solid rgba(225, 29, 72, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      color: var(--accent-bright);
+    }
+    .feature .icon svg { width: 22px; height: 22px; }
+    .feature h3 { color: var(--text); margin-bottom: 8px; }
+    .feature p { font-size: 14px; margin: 0; }
+
+    /* ---- How to run ---- */
+    .how-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .how-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+    }
+    .how-card h3 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .how-card ol {
+      padding-left: 20px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14.5px;
+    }
+    .how-card ol li { margin-bottom: 10px; }
+    .how-card ol li:last-child { margin-bottom: 0; }
+
+    /* ---- Footer ---- */
+    .footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      color: var(--dim);
+      font-size: 13.5px;
+      text-align: center;
+    }
+    .footer a { color: var(--muted); }
+    .footer .divider { color: #30363d; margin: 0 10px; }
+
+    /* ---- Motion-respecting ---- */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#top" class="brand">
+      <span class="logo-mini" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="6" width="14" height="12" rx="2"/>
+          <path d="M16 10 L22 6 L22 18 L16 14 Z" fill="currentColor" stroke="none"/>
+        </svg>
+      </span>
+      QNSub Studio
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#open-source">Open source</a>
+      <a href="#build">Build</a>
+      <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="logo-big" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="6" width="14" height="12" rx="2"/>
+        <path d="M16 10 L22 6 L22 18 L16 14 Z" fill="currentColor" stroke="none"/>
+      </svg>
+    </div>
+    <h1>The screen recorder<br/>you actually want to use.</h1>
+    <p class="tagline">
+      Full-featured recorder with live webcam overlay, AI background replacement,
+      face blur, annotations, voice changer, and a fixed-text overlay — all in one
+      free, open-source Electron app.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://drive.google.com/file/d/1WiiG7oKtfbUybBLH0OxqdwN5yZuUijJY/view?usp=sharing" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download for Windows
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
+        </svg>
+        View source
+      </a>
+    </div>
+    <div class="meta-row">
+      <span>100% open source</span>
+      <span>·</span>
+      <span>Windows 10/11</span>
+      <span>·</span>
+      <span>Built with Electron + React + TypeScript</span>
+    </div>
+    <div class="meta-row" style="margin-top: 10px;">
+      <span>By
+        <a href="https://twitter.com/choloasis" target="_blank" rel="noopener">@choloasis</a>
+      </span>
+      <span>·</span>
+      <span>
+        <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">Read the source on GitHub</a>
+      </span>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="open-source" style="background: linear-gradient(180deg, transparent 0%, rgba(225, 29, 72, 0.04) 100%);">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>100% open source</h2>
+      <p>
+        Every feature on this page is driven by code you can read, fork,
+        and ship your own build of. Nothing is a black box. Nothing
+        phones home. Nothing gets in the way.
+      </p>
+    </div>
+    <div class="how-grid">
+      <div class="how-card">
+        <h3>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+          Read, fork, contribute
+        </h3>
+        <p>
+          The full source lives at
+          <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">
+            github.com/ceasis/qnsub-screenrecorder</a>.
+          Single-repo TypeScript project: main process, preload bridges,
+          and the React renderer all in one place. 51 unit tests. Clean
+          typecheck. Build it yourself in under 3 minutes.
+        </p>
+        <p style="margin-top: 14px;">
+          <a class="btn btn-ghost" href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener" style="padding: 10px 18px; font-size: 14px;">
+            Open repository
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+          </a>
+        </p>
+      </div>
+      <div class="how-card">
+        <h3>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          Follow the build
+        </h3>
+        <p>
+          I'm building this in public. Updates, feature demos, and the
+          occasional "why this took three attempts to get right" post-mortem
+          ship on X / Twitter.
+        </p>
+        <p style="margin-top: 14px;">
+          <a class="btn btn-ghost" href="https://twitter.com/choloasis" target="_blank" rel="noopener" style="padding: 10px 18px; font-size: 14px;">
+            Follow @choloasis
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="features">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>What it does</h2>
+      <p>Every feature runs locally. No account, no cloud processing, no telemetry. Your recordings stay on your machine.</p>
+    </div>
+    <div class="feature-grid">
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/><circle cx="12" cy="11" r="3"/></svg></div>
+        <h3>Screen + webcam recorder</h3>
+        <p>Capture a full display, a specific window, or drag a region. The webcam composites on top as a floating bubble in any of 8 shapes. One output MP4, hardware-encoded.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M3 21v-2a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v2"/></svg></div>
+        <h3>Background replacement</h3>
+        <p>Blur your room or replace it with any image. Runs MediaPipe selfie segmentation or Robust Video Matting (RVM) on your GPU for hair-accurate edges. Auto-picks the best model your machine can handle.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 11l-5 5-5-5"/><path d="M17 6l-5 5-5-5"/></svg></div>
+        <h3>Voice changer</h3>
+        <p>Real-time pitch shifting via a Web Audio "Jungle" graph with Deep / High / Radio / Robot presets, or a custom pitch slider. Swaps live mid-recording without dropouts.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></div>
+        <h3>Live annotations</h3>
+        <p>Hold <kbd>Ctrl</kbd> and drag anywhere on screen to draw arrows, lines, boxes, or highlights. Eight colors, outline / thickness presets, auto-fade so you don't need an undo.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>Fixed text overlay</h3>
+        <p>Watermark, lower-third, or a permanent "LIVE" tag baked into every frame. Font picker, color palette, size slider, shadow / outline / glow effects, and a live preview with draggable position.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg></div>
+        <h3>Cursor zoom</h3>
+        <p>Tutorial-style zoom that smoothly follows your mouse. Dwell delay + follow speed sliders kill motion sickness — the camera only chases when you mean it.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/><path d="M9 9.5c.6-.4 1.3-.6 2-.6M14 11.2c-.3.4-.8.7-1.3.8" opacity="0.5"/></svg></div>
+        <h3>Face blur for existing videos</h3>
+        <p>Drop in any video and the app auto-detects every face, tracks them across frames, and lets you pick which to blur. Exports a clean MP4 with the audio preserved.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg></div>
+        <h3>Idiot board teleprompter</h3>
+        <p>A floating sticky-note that only you can see — invisible to the screen recorder. Auto-docks beneath your face-cam bubble. Perfect for script notes and bullet points during recording.</p>
+      </div>
+
+      <div class="feature">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3>Local-first, private</h3>
+        <p>Every model runs on-device — MediaPipe, RVM, and BlazeFace all inference locally. No uploads, no accounts, no analytics. The only network request is the optional one-time model download on first launch.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section class="section" id="download">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>Download</h2>
+      <p>Windows installer is a one-click NSIS package. macOS users can build from source via <code>npm run dist:mac</code>.</p>
+    </div>
+    <div class="how-grid">
+      <div class="how-card">
+        <h3>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          Windows 10 / 11
+        </h3>
+        <ol>
+          <li>Click <a href="https://drive.google.com/file/d/1WiiG7oKtfbUybBLH0OxqdwN5yZuUijJY/view?usp=sharing" target="_blank" rel="noopener">Download on Google Drive</a>, then hit the download arrow. Google may say it can't virus-scan the file — click <strong>Download anyway</strong>.</li>
+          <li>Run <code>QNSub Screen Recorder Setup X.Y.Z.exe</code>.</li>
+          <li>If Windows SmartScreen appears, click <strong>More info → Run anyway</strong>. The installer is unsigned (no EV cert yet), but safe.</li>
+          <li>Follow the NSIS installer and launch from the Start Menu.</li>
+        </ol>
+      </div>
+      <div class="how-card">
+        <h3>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l8.5 4.9"/></svg>
+          macOS
+        </h3>
+        <ol>
+          <li>macOS builds aren't pre-published yet.</li>
+          <li>Clone the repo and run <code>npm install &amp;&amp; npm run dist:mac</code>.</li>
+          <li>Drag the generated DMG into Applications.</li>
+          <li>First launch needs Screen Recording permission — System Settings → Privacy &amp; Security → Screen Recording.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="build">
+  <div class="wrap">
+    <div class="section-title">
+      <h2>Build from source</h2>
+      <p>Zero-config dev setup. You need Node 18+ and git. The whole build pipeline lives in <code>package.json</code> scripts.</p>
+    </div>
+    <div class="how-grid">
+      <div class="how-card">
+        <h3>Dev mode</h3>
+        <ol>
+          <li><code>git clone https://github.com/ceasis/qnsub-screenrecorder</code></li>
+          <li><code>cd qnsub-screenrecorder</code></li>
+          <li><code>npm install</code></li>
+          <li><code>npm run dev</code> — Vite + Electron with hot reload.</li>
+        </ol>
+      </div>
+      <div class="how-card">
+        <h3>Production build</h3>
+        <ol>
+          <li><code>npm run dist:win</code> — Windows NSIS installer.</li>
+          <li><code>npm run dist:mac</code> — macOS DMG (must run on a Mac).</li>
+          <li>Output lands in <code>out/</code>. Each build auto-increments the patch version in <code>package.json</code>.</li>
+          <li><code>npm test</code> — run the vitest suite (51 tests covering the compositor math, tracker, and filters).</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>
+      <a href="https://github.com/ceasis/qnsub-screenrecorder" target="_blank" rel="noopener">Source on GitHub</a>
+      <span class="divider">·</span>
+      <a href="https://github.com/ceasis/qnsub-screenrecorder/issues" target="_blank" rel="noopener">Report an issue</a>
+      <span class="divider">·</span>
+      <a href="https://github.com/ceasis/qnsub-screenrecorder/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+      <span class="divider">·</span>
+      <a href="https://twitter.com/choloasis" target="_blank" rel="noopener">@choloasis</a>
+    </p>
+    <p style="margin: 0; color: var(--dim);">100% open source. Built in public by <a href="https://twitter.com/choloasis" target="_blank" rel="noopener">@choloasis</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>

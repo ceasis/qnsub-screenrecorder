@@ -1,11 +1,20 @@
 # QNSub Studio
 
-[![tests](https://github.com/choloasis/qnsub-screenrecorder/actions/workflows/test.yml/badge.svg)](https://github.com/choloasis/qnsub-screenrecorder/actions/workflows/test.yml)
+[![tests](https://github.com/ceasis/qnsub-screenrecorder/actions/workflows/test.yml/badge.svg)](https://github.com/ceasis/qnsub-screenrecorder/actions/workflows/test.yml)
 ![license](https://img.shields.io/badge/license-Source--available-blue)
 ![electron](https://img.shields.io/badge/electron-31-47848f)
 ![typescript](https://img.shields.io/badge/typescript-5.5-3178c6)
 
 A full-featured cross-platform **screen recorder + face-cam studio + post-production toolbox**, built with Electron + React + TypeScript.
+
+**100% open source** — every pixel the app composites, every bit of
+audio it processes, every frame it encodes, is driven by code you
+can read right here in this repo. Audit it, modify it, fork it,
+ship your own build. No telemetry, no accounts, no cloud round-trips.
+
+- **Source**: https://github.com/ceasis/qnsub-screenrecorder
+- **Website**: https://ceasis.github.io/qnsub-screenrecorder/
+- **Author**: [@choloasis on Twitter/X](https://twitter.com/choloasis)
 
 ## Download the latest build
 
@@ -42,7 +51,7 @@ You only need this if you want to develop, modify, or package the app yourself.
 ### Run from source (dev mode)
 
 ```bash
-git clone <this-repo-url>
+git clone https://github.com/ceasis/qnsub-screenrecorder.git
 cd qnsub-screenrecorder
 npm install
 npm run dev

@@ -3,7 +3,7 @@ import { existsSync } from 'fs';
 import * as fs from 'fs';
 import { join } from 'path';
 
-import { createMainWindow } from './windows';
+import { createMainWindow, createSplashWindow } from './windows';
 import { registerIpc } from './ipc';
 import { registerShortcuts, unregisterShortcuts } from './shortcuts';
 
@@ -119,10 +119,40 @@ function createTray() {
 }
 
 function bootstrap() {
+  // Splash first so the user sees something immediately while the
+  // main window's renderer bundles, React boots, and localStorage
+  // rehydrates. The splash is closed in the main window's
+  // `ready-to-show` handler (see below).
+  const splashWin = createSplashWindow();
+  const splashShownAt = Date.now();
+
   mainWindow = createMainWindow();
   registerIpc(() => mainWindow);
   registerShortcuts(() => mainWindow);
   createTray();
+
+  // Close the splash once the main window is actually painted.
+  // Minimum visible time is 5 seconds so the user has time to read
+  // the brand + "100% open source" + GitHub URL + Twitter handle
+  // — and to click through if they want. On slower machines the
+  // splash stays up as long as the main window needs to boot.
+  const MIN_SPLASH_MS = 5000;
+  mainWindow.once('ready-to-show', () => {
+    const elapsed = Date.now() - splashShownAt;
+    const wait = Math.max(0, MIN_SPLASH_MS - elapsed);
+    setTimeout(() => {
+      try {
+        if (!splashWin.isDestroyed()) splashWin.close();
+      } catch {}
+    }, wait);
+  });
+  // Also close the splash if the main window errors out during load
+  // so we don't leave an orphan splash on the user's screen.
+  mainWindow.webContents.once('did-fail-load', () => {
+    try {
+      if (!splashWin.isDestroyed()) splashWin.close();
+    } catch {}
+  });
 
   // Intercept the close event so the X just hides the window. The user
   // can quit explicitly via the in-app Quit button or the tray menu.
