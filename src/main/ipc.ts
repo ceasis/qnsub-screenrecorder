@@ -139,12 +139,14 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
   });
 
   // ---- Countdown ----
-  ipcMain.handle('countdown:show', async (_e, seconds: number = 3) => {
+  ipcMain.handle('countdown:show', async (_e, opts: { seconds: number; style: 'numbers' | 'bar' } | number = { seconds: 3, style: 'numbers' }) => {
+    // Back-compat: older callers may still pass a bare number.
+    const cfg = typeof opts === 'number' ? { seconds: opts, style: 'numbers' as const } : opts;
     if (countdownWin && !countdownWin.isDestroyed()) countdownWin.close();
     countdownWin = createCountdownWindow();
     return new Promise<void>((resolve) => {
       countdownWin!.webContents.once('did-finish-load', () => {
-        countdownWin!.webContents.send('countdown:start', seconds);
+        countdownWin!.webContents.send('countdown:start', cfg);
       });
       ipcMain.once('countdown:done', () => {
         if (countdownWin && !countdownWin.isDestroyed()) countdownWin.close();

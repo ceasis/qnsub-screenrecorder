@@ -23,14 +23,15 @@ ship your own build. No telemetry, no accounts, no cloud round-trips.
 
 QNSub Studio is one of several tools built in public. If you like how this one is put together, the rest of the lineup might be worth a look:
 
-- **[qnsub.com](https://qnsub.com)** — studio home
-- **[anythingtext.com](https://anythingtext.com)** — text tools
-- **[rescanflow.com](https://rescanflow.com)** — scan workflow
-- **[cvscorecard.com](https://cvscorecard.com)** — CV scoring
-- **[backerspot.com](https://backerspot.com)** — backers
-- **[whatsaifor.com](https://whatsaifor.com)** — AI use cases
-- **[langswarm.com](https://langswarm.com)** — language
-- **[tym.io](https://tym.io)** — tym.io
+- **[qnsub.com](https://qnsub.com)** — our company's main website
+- **[anythingtext.com](https://anythingtext.com)** — all the text tools you need, A to Z
+- **[rescanflow.com](https://rescanflow.com)** — scan your website for UI and system issues
+- **[buildnextapp.com](https://buildnextapp.com)** — build websites with AI
+- **[cvscorecard.com](https://cvscorecard.com)** — CV scoring, get hired fast _(under construction)_
+- **[backerspot.com](https://backerspot.com)** — get funding for your projects
+- **[whatsaifor.com](https://whatsaifor.com)** — AI use cases directory
+- **[langswarm.com](https://langswarm.com)** — create and use AI agents
+- **[tym.io](https://tym.io)** — online timesheet
 
 ## Download the latest build
 

@@ -25,6 +25,7 @@ import type { SegMode, SegBackendId } from '../lib/segmenter';
 import { detectBestBackend } from '../lib/segmenter';
 import { Help } from './Help';
 import { usePersistedState } from './usePersistedState';
+import { DID_YOU_KNOW_TIPS } from '../../shared/tips';
 
 declare global {
   interface Window {
@@ -33,7 +34,7 @@ declare global {
       openRegion: () => Promise<boolean>;
       onRegionResult: (cb: (r: RegionResult) => void) => () => void;
       onRegionCancel: (cb: () => void) => () => void;
-      showCountdown: (s?: number) => Promise<void>;
+      showCountdown: (opts?: { seconds: number; style: 'numbers' | 'bar' }) => Promise<void>;
       openAnnotation: () => Promise<boolean>;
       closeAnnotation: () => Promise<boolean>;
       setAnnotationColor: (c: AnnotationColor) => void;
@@ -425,6 +426,11 @@ export default function RecorderTab() {
     setColor(p.color);
     setAnnOutline(p.outline ?? null);
   }
+  // Countdown before recording starts. 0 = skip entirely and start
+  // instantly. Style controls whether the overlay shows a big number
+  // (3-2-1) or a progress bar — both feed from the same duration.
+  const [countdownSeconds, setCountdownSeconds] = usePersistedState<number>('rec.countdownSeconds', 3);
+  const [countdownStyle, setCountdownStyle] = usePersistedState<'numbers' | 'bar'>('rec.countdownStyle', 'numbers');
   const [cursorZoom, setCursorZoom] = usePersistedState<boolean>('rec.cursorZoom', false);
   const [cursorZoomFactor, setCursorZoomFactor] = usePersistedState<number>('rec.cursorZoomFactor', 1.3);
   // How aggressively the crop chases the cursor. Low = slow drift,
@@ -450,6 +456,7 @@ export default function RecorderTab() {
   const segmentStartRef = useRef<number | null>(null); // wall-clock ms when current run-segment started
   const [recState, setRecState] = useState<'idle' | 'recording' | 'paused'>('idle');
   const [status, setStatus] = useState('Ready');
+  const [tipIndex, setTipIndex] = useState(() => Math.floor(Math.random() * DID_YOU_KNOW_TIPS.length));
   const [saveFolder, setSaveFolder] = usePersistedState<string>('rec.saveFolder', '');
   const [openFolderAfter, setOpenFolderAfter] = usePersistedState<boolean>('rec.openFolderAfter', true);
   const [webcamAutoOpacity, setWebcamAutoOpacity] = usePersistedState<boolean>('rec.webcamAutoOpacity', false);
@@ -791,9 +798,11 @@ export default function RecorderTab() {
         });
       }
 
-      // 7. Countdown
-      setStatus('Get ready…');
-      await window.api.showCountdown(3);
+      // 7. Countdown — skip entirely if the user set duration to 0.
+      if (countdownSeconds > 0) {
+        setStatus('Get ready…');
+        await window.api.showCountdown({ seconds: countdownSeconds, style: countdownStyle });
+      }
 
       // 9. Annotation overlay
       await window.api.openAnnotation();
@@ -1220,6 +1229,24 @@ export default function RecorderTab() {
   return (
     <>
       <div className="tab-toolbar">
+        <div className="tip-box" title="Click Next for another tip">
+          <span className="tip-box-icon" aria-hidden>💡</span>
+          <div className="tip-box-body">
+            <div className="tip-box-label">
+              Did you know? <span className="tip-box-count">Tip {tipIndex + 1} of {DID_YOU_KNOW_TIPS.length}</span>
+            </div>
+            <div className="tip-box-text">{DID_YOU_KNOW_TIPS[tipIndex]}</div>
+          </div>
+          <button
+            type="button"
+            className="tip-box-next"
+            onClick={() => setTipIndex((i) => (i + 1) % DID_YOU_KNOW_TIPS.length)}
+            title="Show next tip"
+            aria-label="Next tip"
+          >
+            Next ▸
+          </button>
+        </div>
         <div className={`status ${recState}`}>{status}</div>
         {recState !== 'idle' && (
           <div className={`rec-timer ${recState}`}>
@@ -2023,6 +2050,34 @@ export default function RecorderTab() {
             <span className="step">8</span> Recording FX
             <Help>Extra effects applied during recording. The cursor-zoom pans and zooms into the area around your mouse for tutorial-style videos. The idiot board shows notes only to you — they are hidden from the recording.</Help>
           </h2>
+          <div className="row two-col">
+            <label className="row-label">Start countdown <Help>How long the 3-2-1 overlay runs before recording actually starts. Set to "Off" to start recording instantly with zero delay. Useful if you've already set up your scene and just want to hit record.</Help></label>
+            <div className="row-ctrl">
+              <select value={countdownSeconds} onChange={(e) => setCountdownSeconds(+e.target.value)}>
+                <option value={0}>Off (start instantly)</option>
+                <option value={1}>1 second</option>
+                <option value={2}>2 seconds</option>
+                <option value={3}>3 seconds</option>
+                <option value={5}>5 seconds</option>
+                <option value={10}>10 seconds</option>
+              </select>
+            </div>
+          </div>
+          {countdownSeconds > 0 && (
+            <div className="row two-col">
+              <label className="row-label">Countdown style <Help>How the countdown is displayed on screen. Numbers shows a big 3-2-1 ring in the middle of your screen. Progress bar shows a subtle pill with a filling bar — less obtrusive if you're mid-scene.</Help></label>
+              <div className="row-ctrl">
+                <label className="check inline">
+                  <input type="radio" name="countdownStyle" value="numbers" checked={countdownStyle === 'numbers'} onChange={() => setCountdownStyle('numbers')} />
+                  Numbers (3-2-1)
+                </label>
+                <label className="check inline">
+                  <input type="radio" name="countdownStyle" value="bar" checked={countdownStyle === 'bar'} onChange={() => setCountdownStyle('bar')} />
+                  Progress bar
+                </label>
+              </div>
+            </div>
+          )}
           <div className="row two-col">
             <label className="row-label">Cursor zoom <Help>When enabled, the recorded video smoothly zooms toward your mouse cursor. Useful for tutorials where you want to emphasise what you are clicking. The zoom is applied to the captured screen, not the live display.</Help></label>
             <div className="row-ctrl">

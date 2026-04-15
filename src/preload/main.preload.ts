@@ -16,7 +16,8 @@ const api = {
     return () => ipcRenderer.removeListener('region:cancel', listener);
   },
 
-  showCountdown: (seconds: number = 3): Promise<void> => ipcRenderer.invoke('countdown:show', seconds),
+  showCountdown: (opts: { seconds: number; style: 'numbers' | 'bar' } = { seconds: 3, style: 'numbers' }): Promise<void> =>
+    ipcRenderer.invoke('countdown:show', opts),
 
   openAnnotation: () => ipcRenderer.invoke('annotation:open'),
   closeAnnotation: () => ipcRenderer.invoke('annotation:close'),

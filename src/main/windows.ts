@@ -1,5 +1,6 @@
 import { BrowserWindow, screen, shell } from 'electron';
 import { join } from 'path';
+import { DID_YOU_KNOW_TIPS } from '../shared/tips';
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL'];
 
@@ -99,8 +100,8 @@ export function createIdiotBoardWindow(): BrowserWindow {
  * window fires `ready-to-show`.
  */
 export function createSplashWindow(): BrowserWindow {
-  const width = 506;
-  const height = 391;
+  const width = 520;
+  const height = 470;
   const primary = screen.getPrimaryDisplay();
   const win = new BrowserWindow({
     width,
@@ -231,6 +232,64 @@ export function createSplashWindow(): BrowserWindow {
     0%   { left: -40%; }
     100% { left: 100%; }
   }
+  .tip {
+    margin-top: 14px;
+    width: 100%;
+    padding: 12px 14px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 184, 107, 0.28);
+    background: linear-gradient(160deg, rgba(255, 184, 107, 0.08) 0%, rgba(255, 184, 107, 0.02) 100%);
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    text-align: left;
+    animation: tip-in 340ms ease-out 200ms backwards;
+  }
+  @keyframes tip-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .tip-icon {
+    flex-shrink: 0;
+    font-size: 16px;
+    line-height: 1.4;
+  }
+  .tip-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .tip-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #ffb86b;
+    margin-bottom: 2px;
+  }
+  .tip-count {
+    margin-left: 6px;
+    padding-left: 8px;
+    border-left: 1px solid rgba(255, 184, 107, 0.35);
+    font-weight: 600;
+    color: rgba(255, 184, 107, 0.72);
+  }
+  .tip-text {
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #c7ced9;
+    font-weight: 500;
+  }
+  .tip-text kbd {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+  }
   .credits {
     margin-top: 16px;
     padding-top: 16px;
@@ -278,6 +337,13 @@ export function createSplashWindow(): BrowserWindow {
     <h1 class="title">QNSub Studio</h1>
     <p class="subtitle">Starting up…</p>
     <div class="spinner"></div>
+    <div class="tip">
+      <span class="tip-icon">💡</span>
+      <div class="tip-body">
+        <div class="tip-label">Did you know? <span class="tip-count" id="tip-count"></span></div>
+        <div class="tip-text" id="tip-text">Loading tip…</div>
+      </div>
+    </div>
     <div class="credits">
       <span class="os">100% open source</span>
       <br/>
@@ -290,6 +356,14 @@ export function createSplashWindow(): BrowserWindow {
       <a href="https://paypal.me/qnsub" target="_blank" rel="noopener">☕ buy me a coffee · paypal.me/qnsub</a>
     </div>
   </div>
+  <script>
+    var TIPS = ${JSON.stringify(DID_YOU_KNOW_TIPS)};
+    var idx = Math.floor(Math.random() * TIPS.length);
+    var el = document.getElementById('tip-text');
+    if (el) el.textContent = TIPS[idx];
+    var cel = document.getElementById('tip-count');
+    if (cel) cel.textContent = 'Tip ' + (idx + 1) + ' of ' + TIPS.length;
+  </script>
 </body>
 </html>`;
 

@@ -1,6 +1,6 @@
 {
   "name": "qnsub-screenrecorder",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Full-featured cross-platform screen recorder with webcam overlay, annotations, and system audio",
   "main": "dist/main/main.js",
   "author": "QNSub",

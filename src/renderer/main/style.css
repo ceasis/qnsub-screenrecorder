@@ -312,6 +312,71 @@ header h1::before {
   vertical-align: middle;
   box-shadow: 0 0 0 5px rgba(79, 140, 255, 0.18);
 }
+.tip-box {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1 1 auto;
+  max-width: 50vw;
+  min-width: 0;
+  padding: 10px 62px 10px 14px;
+  border-radius: 11px;
+  border: 1px solid rgba(255, 184, 107, 0.28);
+  background: linear-gradient(160deg, rgba(255, 184, 107, 0.09) 0%, rgba(255, 184, 107, 0.02) 100%);
+}
+.tip-box-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tip-box-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tip-box-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffb86b;
+  line-height: 1.2;
+}
+.tip-box-count {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 184, 107, 0.35);
+  font-weight: 600;
+  color: rgba(255, 184, 107, 0.72);
+}
+.tip-box-text {
+  font-size: 13.8px;
+  color: #c7ced9;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+}
+.tip-box-next {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 184, 107, 0.4);
+  background: rgba(255, 184, 107, 0.1);
+  color: #ffb86b;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.tip-box-next:hover {
+  background: rgba(255, 184, 107, 0.2);
+  border-color: rgba(255, 184, 107, 0.65);
+}
+
 .status {
   margin-left: auto;
   font-size: 12px;

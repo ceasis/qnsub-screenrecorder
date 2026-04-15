@@ -442,20 +442,21 @@ const SECTIONS: Section[] = [
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
             gap: 10,
             marginTop: 10
           }}
         >
           {[
-            { domain: 'qnsub.com', tag: 'Studio home' },
-            { domain: 'anythingtext.com', tag: 'Text tools' },
-            { domain: 'rescanflow.com', tag: 'Scan workflow' },
-            { domain: 'cvscorecard.com', tag: 'CV scoring' },
-            { domain: 'backerspot.com', tag: 'Backers' },
-            { domain: 'whatsaifor.com', tag: 'AI use cases' },
-            { domain: 'langswarm.com', tag: 'Language' },
-            { domain: 'tym.io', tag: 'tym.io' }
+            { domain: 'qnsub.com', tag: "Our company's main website" },
+            { domain: 'anythingtext.com', tag: 'All the text tools you need, A to Z' },
+            { domain: 'rescanflow.com', tag: 'Scan your site for UI & system issues' },
+            { domain: 'buildnextapp.com', tag: 'Build websites with AI' },
+            { domain: 'cvscorecard.com', tag: 'CV scoring — get hired fast (soon)' },
+            { domain: 'backerspot.com', tag: 'Get funding for your projects' },
+            { domain: 'whatsaifor.com', tag: 'AI use cases directory' },
+            { domain: 'langswarm.com', tag: 'Create and use AI agents' },
+            { domain: 'tym.io', tag: 'Online timesheet' }
           ].map((p) => (
             <a
               key={p.domain}
