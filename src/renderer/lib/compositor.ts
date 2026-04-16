@@ -245,24 +245,36 @@ export class Compositor {
   async start() {
     if (this.running) return;
     this.running = true;
-    try {
-      await this.segmenter.init();
-    } catch (e) {
-      console.warn('Segmenter init failed; falling back to raw webcam', e);
-    }
-    // Prime the segmentation mask BEFORE the first draw, so the very
-    // first recorded frame already has a valid background composited.
-    // Without this, the first few hundred milliseconds of the
-    // recording fall through to the raw webcam because drawWebcam
-    // reads `getMaskCanvas()` synchronously and inference hasn't
-    // completed yet.
-    try {
-      const wv = this.cfg.webcamVideo;
-      if (wv && wv.readyState >= 2) {
-        await this.segmenter.process(wv);
+    // Only initialise the segmenter if we actually need it. When
+    // bgMode is 'none' and autoCenter is off, there's no reason to
+    // load the ~5MB MediaPipe WASM + model and allocate WebGL
+    // contexts. This is critical for the idle preview compositor
+    // (which forces bgMode:'none') — without this guard, it would
+    // create a MediaPipe Graph that competes with the floating
+    // webcam window's Graph for WebGL pooled buffers, intermittently
+    // breaking the bubble's background replacement.
+    const needsSeg =
+      this.webcamSettings.bgMode !== 'none' ||
+      this.webcamSettings.autoCenter === true;
+    if (needsSeg) {
+      try {
+        await this.segmenter.init();
+      } catch (e) {
+        console.warn('Segmenter init failed; falling back to raw webcam', e);
       }
-    } catch (e) {
-      console.warn('Segmenter initial process failed', e);
+      // Prime the segmentation mask BEFORE the first draw, so the
+      // very first recorded frame already has a valid background
+      // composited. Without this, the first few hundred milliseconds
+      // fall through to the raw webcam because drawWebcam reads
+      // getMaskCanvas() synchronously and inference hasn't completed.
+      try {
+        const wv = this.cfg.webcamVideo;
+        if (wv && wv.readyState >= 2) {
+          await this.segmenter.process(wv);
+        }
+      } catch (e) {
+        console.warn('Segmenter initial process failed', e);
+      }
     }
     // Draw one initial frame so the canvas isn't black at t=0.
     if (!this.paused) this.drawFrame();

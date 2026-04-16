@@ -142,9 +142,31 @@ export default function WebcamOverlay() {
   // GPU isn't running ~90 MediaPipe inferences/sec (60 here + 30 in
   // the compositor). The bubble shows raw camera during recording;
   // background replacement is handled by the recording compositor.
+  //
+  // When recording STOPS, we reinitialize the segmenter from scratch.
+  // During recording the compositor's MediaPipe Graph holds WebGL
+  // contexts on the same GPU; Chrome may evict our idle Graph's
+  // contexts under memory pressure. If that happens, our process()
+  // calls silently produce null masks after resuming and the bubble
+  // shows raw camera. A fresh init guarantees new WebGL contexts
+  // from the now-freed GPU, so background replacement always comes
+  // back cleanly after a recording.
   useEffect(() => {
     const off = (window.webcamApi as any).onRecordingState?.((recording: boolean) => {
+      const wasRecording = recordingActiveRef.current;
       recordingActiveRef.current = recording;
+      // Reinit the segmenter when transitioning recording → idle.
+      if (wasRecording && !recording) {
+        const cur = cfgRef.current;
+        const needsSeg = cur.bgMode !== 'none' || cur.autoCenter === true;
+        if (needsSeg && segRef.current) {
+          try { segRef.current.close(); } catch {}
+          segRef.current = new WebcamSegmenter(cur.segBackend ?? 'selfie');
+          segRef.current.init().catch((e) => {
+            console.warn('[Webcam] segmenter reinit after recording failed', e);
+          });
+        }
+      }
     });
     return off;
   }, []);
