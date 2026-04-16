@@ -35,7 +35,54 @@
 //     compositor sees this, it skips the whole mask-refinement path
 //     and draws the matted canvas directly over the new background.
 
-import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
+// NOTE: `@mediapipe/selfie_segmentation` is NOT imported as an ESM
+// named import. The package is a Closure Compiler IIFE that registers
+// the SelfieSegmentation class on `this` via `}).call(this)`. In
+// dev mode Vite's CJS interop makes `this = window`, so the named
+// import works. In the production (asar-packed) build the IIFE's
+// `this` is `undefined` (strict mode wrapper) and the class never
+// attaches, resulting in "SelfieSegmentation is not a constructor".
+//
+// Fix: load the script from the same CDN the WASM/model files
+// already come from at runtime, which runs the IIFE in `<script>`
+// scope where `this = window`. The helper below is called once from
+// SelfieBackend.init() and cached.
+let _SelfieSegClass: any = null;
+async function loadSelfieSegmentation(): Promise<any> {
+  if (_SelfieSegClass) return _SelfieSegClass;
+  // Fast path: if the import DID work (dev mode), use it.
+  try {
+    const mod = await import('@mediapipe/selfie_segmentation');
+    const cls = (mod as any).SelfieSegmentation || (mod as any).default?.SelfieSegmentation;
+    if (typeof cls === 'function') {
+      _SelfieSegClass = cls;
+      return cls;
+    }
+  } catch {}
+  // Check if a previous <script> load already registered it.
+  if (typeof (window as any).SelfieSegmentation === 'function') {
+    _SelfieSegClass = (window as any).SelfieSegmentation;
+    return _SelfieSegClass;
+  }
+  // Slow path: load from CDN via a <script> tag. The IIFE registers
+  // SelfieSegmentation on `window` when `this = window`.
+  return new Promise<any>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js';
+    script.onload = () => {
+      const cls = (window as any).SelfieSegmentation;
+      if (typeof cls === 'function') {
+        _SelfieSegClass = cls;
+        resolve(cls);
+      } else {
+        reject(new Error('SelfieSegmentation not found on window after CDN script load'));
+      }
+    };
+    script.onerror = () => reject(new Error('Failed to load SelfieSegmentation from CDN'));
+    document.head.appendChild(script);
+  });
+}
+
 import { ImageSegmenter, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
 import { refineMaskGL } from './maskRefineGL';
@@ -60,18 +107,19 @@ interface Backend {
 
 class SelfieBackend implements Backend {
   readonly id: SegBackendId = 'selfie';
-  private seg: SelfieSegmentation | null = null;
+  private seg: any = null;
   private ready = false;
   private maskCanvas = document.createElement('canvas');
   private haveMask = false;
 
   async init() {
     if (this.seg) return;
-    this.seg = new SelfieSegmentation({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+    const SelfieSegCls = await loadSelfieSegmentation();
+    this.seg = new SelfieSegCls({
+      locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
     });
     this.seg.setOptions({ modelSelection: 1, selfieMode: false });
-    this.seg.onResults((r) => {
+    this.seg.onResults((r: any) => {
       const mask = r.segmentationMask as unknown as CanvasImageSource & { width: number; height: number };
       if (!mask) return;
       const w = mask.width || 256;

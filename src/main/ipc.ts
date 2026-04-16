@@ -233,6 +233,29 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
       }
       const b = webcamWin.getBounds();
       webcamHomePos = { x: b.x, y: b.y };
+      // Forward the new bounds + the display the window is sitting
+      // on to the main renderer so the idle preview / recording
+      // compositor can recompute where the webcam overlay should be
+      // baked into the output frame. Without this, the preview shows
+      // the bubble at the step-9 "Position" slider coordinates even
+      // though the user physically dragged the floating window
+      // somewhere else.
+      const main = getMainWindow();
+      if (main && !main.isDestroyed()) {
+        try {
+          const d = screen.getDisplayMatching(b);
+          main.webContents.send('webcam:moved', {
+            bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+            display: {
+              id: String(d.id),
+              x: d.bounds.x,
+              y: d.bounds.y,
+              width: d.bounds.width,
+              height: d.bounds.height
+            }
+          });
+        } catch {}
+      }
     };
     webcamWin.on('move', onWebcamMove);
     webcamWin.on('moved', onWebcamMove);

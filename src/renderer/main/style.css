@@ -602,6 +602,23 @@ header h1::before {
 .chip.player-play {
   margin-right: 10px;
 }
+/* The Play button combines `.chip` (which has a dark hover background)
+   with `.success` (which paints the text a dark green suitable for a
+   green-on-white fill). On hover `.chip:hover` repaints the background
+   dark but leaves the dark-green text unchanged, making the label
+   disappear against the dark panel. Pin the text/background/border so
+   the success chip keeps its own palette at rest AND on hover. */
+.chip.success {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #06210d;
+}
+.chip.success:hover {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #06210d;
+  filter: brightness(1.08);
+}
 .player-volume {
   width: 100px;
 }
@@ -1102,6 +1119,11 @@ input[type="range"] {
   justify-content: center;
   overflow: hidden;
   border: 1px solid var(--border);
+  /* Clamp the preview to 500px wide. Runs the same Compositor as the
+     recording so the internal canvas is 1280×720 — CSS scales that
+     down to 500px for on-screen display, preserving aspect ratio. */
+  width: 500px;
+  max-width: 100%;
 }
 .preview .empty {
   color: var(--muted-2);

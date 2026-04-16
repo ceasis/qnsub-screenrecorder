@@ -58,6 +58,10 @@ declare global {
       updateWebcamOverlay: (cfg: WebcamOverlayCfg) => Promise<boolean>;
       closeWebcamOverlay: () => Promise<boolean>;
       onWebcamLocalChange: (cb: (patch: Partial<WebcamOverlayCfg>) => void) => () => void;
+      onWebcamMoved: (cb: (info: {
+        bounds: { x: number; y: number; width: number; height: number };
+        display: { id: string; x: number; y: number; width: number; height: number };
+      }) => void) => () => void;
       startCursorTracking: () => Promise<boolean>;
       stopCursorTracking: () => Promise<boolean>;
       onCursorPos: (cb: (p: { x: number; y: number; displayX: number; displayY: number; displayW: number; displayH: number }) => void) => () => void;
@@ -531,6 +535,13 @@ export default function RecorderTab() {
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const webcamVideoRef = useRef<HTMLVideoElement>(null);
   const previewHostRef = useRef<HTMLDivElement>(null);
+  // 1 fps display canvas for the Preview panel. Never receives the
+  // compositor's 30 fps output directly — instead a setInterval at
+  // 1 Hz copies whichever compositor is currently active (idle or
+  // recording) onto this canvas via drawImage. Keeps the preview
+  // panel cheap to paint (one repaint/sec) even while a 30 fps
+  // recording is running underneath.
+  const previewDisplayCanvasRef = useRef<HTMLCanvasElement>(null);
   const compositorRef = useRef<Compositor | null>(null);
   const recorderRef = useRef<MR | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -548,6 +559,19 @@ export default function RecorderTab() {
     audio: HTMLAudioElement;
   } | null>(null);
   const bgMusicPlayerRef = useRef<BgMusicPlayer | null>(null);
+  // Idle preview compositor. Spins up whenever the user is on the
+  // Recorder tab with a source selected but NOT recording, running the
+  // exact same Compositor pipeline (screen + webcam overlay + effects +
+  // background replacement) at lower output resolution so the Preview
+  // panel mirrors what the final MP4 will look like without having to
+  // press Start. Torn down at the top of startRecording so its screen /
+  // webcam captures don't conflict with the real recording streams.
+  const idlePreviewCompRef = useRef<Compositor | null>(null);
+  const idlePreviewStreamsRef = useRef<MediaStream[]>([]);
+  // Monotonic "epoch" counter bumped on every start/stop — lets
+  // concurrent calls (rapid dep changes) bail out of stale async work
+  // once they notice the epoch moved under them.
+  const idlePreviewEpochRef = useRef(0);
   // Streaming-finalize session id (returned from main when ffmpeg is
   // ready). Null means we're using the legacy buffered save path.
   const streamSessionRef = useRef<string | null>(null);
@@ -665,6 +689,233 @@ export default function RecorderTab() {
     return off;
   }, [recState]);
 
+  // ---- 1 fps display copy loop ----
+  // Runs once for the component's lifetime. Every 1 second, copies
+  // whichever compositor is currently active (idle preview OR live
+  // recording) onto the preview display canvas. Decouples the
+  // preview's repaint rate from the compositor's internal fps so
+  // the panel stays light even during a 30 fps recording.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const display = previewDisplayCanvasRef.current;
+      const comp = compositorRef.current;
+      if (!display || !comp) return;
+      const src = comp.canvas;
+      if (!src || src.width === 0 || src.height === 0) return;
+      if (display.width !== src.width) display.width = src.width;
+      if (display.height !== src.height) display.height = src.height;
+      const ctx = display.getContext('2d');
+      if (!ctx) return;
+      try {
+        ctx.drawImage(src, 0, 0, display.width, display.height);
+      } catch {}
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ---- Idle preview compositor ----
+  // Mirrors the real recording output (screen + webcam overlay +
+  // face FX + background replacement) in the Preview panel while
+  // the user is still setting up, so they can see what they'll get
+  // without having to press Start. Runs at lower output res than
+  // the real recording to keep CPU/GPU cost low.
+  //
+  // The start function is stashed in a ref so the lifecycle effect
+  // (which depends on a long list of settings) can call it without
+  // capturing every single one in its closure — we read current
+  // values through `settingsSnapshotRef` below.
+  const stopIdlePreview = async () => {
+    const comp = idlePreviewCompRef.current;
+    // Idempotency guard: if no idle preview is currently running we
+    // must NOT touch any shared resources. Without this, the
+    // effect's cleanup (which fires when recState goes idle →
+    // recording) would clobber the real recording compositor by
+    // wiping srcObjects and the preview host innerHTML — both of
+    // which now belong to the live recording setup. Symptom was
+    // "recording produces a single still frame" because the screen
+    // video's srcObject was reset underneath the compositor.
+    if (!comp) return;
+    idlePreviewCompRef.current = null;
+    try { comp.stop(); } catch {}
+    if (compositorRef.current === comp) compositorRef.current = null;
+    for (const s of idlePreviewStreamsRef.current) {
+      try { s.getTracks().forEach((t) => t.stop()); } catch {}
+    }
+    idlePreviewStreamsRef.current = [];
+    // Clear the hidden <video> elements so the stopped MediaStreams
+    // can be garbage-collected. They'll be reassigned when the next
+    // preview (or the real recording) starts.
+    if (screenVideoRef.current) {
+      try { screenVideoRef.current.srcObject = null; } catch {}
+    }
+    if (webcamVideoRef.current) {
+      try { webcamVideoRef.current.srcObject = null; } catch {}
+    }
+    // Leave the preview display canvas alone — it's a static React
+    // child now, not dynamically injected. The next compositor (idle
+    // preview or recording) will re-populate it via the 1 Hz copy
+    // loop as soon as `compositorRef.current` is reassigned.
+  };
+
+  // We intentionally read the *latest* settings out of a ref rather
+  // than the closure so the lifecycle effect's dep list can stay
+  // small. Any setting change fires the existing "keep compositor
+  // settings live" effect further down, which updates the running
+  // preview compositor via setWebcamSettings.
+  const previewSnapshotRef = useRef({
+    shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight,
+    webcamPos, autoCenter, resolvedBackend, bgEffect, bgBlurPx, bgZoom,
+    faceBlurPx, includeWebcam, cameraId, selectedSource, region
+  });
+  previewSnapshotRef.current = {
+    shape, size, bgMode, effect, zoom, offsetX, offsetY, faceLight,
+    webcamPos, autoCenter, resolvedBackend, bgEffect, bgBlurPx, bgZoom,
+    faceBlurPx, includeWebcam, cameraId, selectedSource, region
+  };
+
+  const startIdlePreview = async () => {
+    const snap = previewSnapshotRef.current;
+    if (!snap.selectedSource || snap.region) return;
+    // Monotonic epoch — used to bail out of this start attempt if a
+    // subsequent stop/start supersedes it while we're awaiting the
+    // media streams.
+    const epoch = ++idlePreviewEpochRef.current;
+    // Tear down any in-flight preview first (this also bumps the
+    // preview host placeholder back, which we'll replace below).
+    await stopIdlePreview();
+    if (epoch !== idlePreviewEpochRef.current) return;
+
+    const collected: MediaStream[] = [];
+    try {
+      // 1. Low-res screen stream. No audio — the preview doesn't
+      //    need mic / system audio, and opening audio here would
+      //    conflict with the real recording's audio requests.
+      //    `maxFrameRate: 1` deliberately throttles the source to
+      //    one frame per second. Chromium's requestVideoFrameCallback
+      //    only fires when the underlying video produces a new
+      //    frame, so the compositor's tick (and therefore drawFrame
+      //    + segmentation inference on the shared segmenter) also
+      //    runs ~1 fps — near-zero CPU cost for an idle preview.
+      const screenStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: snap.selectedSource,
+            maxWidth: 1280,
+            maxHeight: 720,
+            maxFrameRate: 1
+          }
+        } as any
+      });
+      if (epoch !== idlePreviewEpochRef.current) {
+        try { screenStream.getTracks().forEach((t) => t.stop()); } catch {}
+        return;
+      }
+      collected.push(screenStream);
+      const sv = screenVideoRef.current!;
+      sv.srcObject = screenStream;
+      await sv.play().catch(() => {});
+      if (!sv.videoWidth) {
+        await new Promise<void>((resolve) => {
+          const onMeta = () => { sv.removeEventListener('loadedmetadata', onMeta); resolve(); };
+          sv.addEventListener('loadedmetadata', onMeta);
+        });
+      }
+      if (epoch !== idlePreviewEpochRef.current) {
+        collected.forEach((s) => { try { s.getTracks().forEach((t) => t.stop()); } catch {} });
+        return;
+      }
+
+      // 2. Webcam stream (if enabled). Failure is non-fatal — we
+      //    still show the screen half of the preview.
+      let webcamStream: MediaStream | null = null;
+      if (snap.includeWebcam) {
+        try {
+          webcamStream = await getWebcamStream(snap.cameraId);
+          if (epoch !== idlePreviewEpochRef.current) {
+            try { webcamStream.getTracks().forEach((t) => t.stop()); } catch {}
+            collected.forEach((s) => { try { s.getTracks().forEach((t) => t.stop()); } catch {} });
+            return;
+          }
+          collected.push(webcamStream);
+          const wv = webcamVideoRef.current!;
+          wv.srcObject = webcamStream;
+          await wv.play().catch(() => {});
+        } catch (e) {
+          console.warn('[Recorder] idle preview webcam unavailable', e);
+        }
+      }
+
+      if (epoch !== idlePreviewEpochRef.current) {
+        collected.forEach((s) => { try { s.getTracks().forEach((t) => t.stop()); } catch {} });
+        return;
+      }
+
+      // 3. Build a compositor at 1280×720. Same settings the real
+      //    recording would use — the Compositor class is agnostic
+      //    about the output resolution, so every face light / bg
+      //    blur / effect etc. renders identically.
+      const webcamSettings: WebcamSettings = {
+        shape: snap.shape,
+        size: snap.size,
+        bgMode: snap.bgMode,
+        effect: snap.effect,
+        zoom: snap.zoom,
+        offsetX: snap.offsetX,
+        offsetY: snap.offsetY,
+        faceLight: snap.faceLight,
+        x: snap.webcamPos.x,
+        y: snap.webcamPos.y,
+        bgImage: bgImageRef.current,
+        autoCenter: snap.autoCenter,
+        segBackend: snap.resolvedBackend,
+        bgEffect: snap.bgEffect,
+        bgBlurPx: snap.bgBlurPx,
+        bgZoom: snap.bgZoom,
+        faceBlurPx: snap.faceBlurPx
+      };
+      const comp = new Compositor(
+        {
+          screenVideo: sv,
+          webcamVideo: webcamStream ? webcamVideoRef.current : null,
+          crop: null,
+          outWidth: 1280,
+          outHeight: 720
+        },
+        webcamSettings
+      );
+      idlePreviewCompRef.current = comp;
+      idlePreviewStreamsRef.current = collected;
+      compositorRef.current = comp;
+      // Preview display canvas is React-managed and always present
+      // in the DOM. The 1 Hz copy loop (defined above) picks up the
+      // new compositor via compositorRef and starts painting frames
+      // onto the display canvas on its next tick.
+      await comp.start();
+    } catch (e) {
+      console.warn('[Recorder] idle preview start failed', e);
+      collected.forEach((s) => { try { s.getTracks().forEach((t) => t.stop()); } catch {} });
+      if (epoch === idlePreviewEpochRef.current) await stopIdlePreview();
+    }
+  };
+
+  // Drive the idle preview lifecycle: restart the compositor whenever
+  // the *structural* inputs change (source/region/webcam toggle/
+  // camera device). The numeric sliders (zoom, face-light, etc.) are
+  // pushed via setWebcamSettings by the "keep compositor settings
+  // live" effect further down so the preview updates instantly
+  // without a full restart.
+  useEffect(() => {
+    if (recState !== 'idle') {
+      stopIdlePreview();
+      return;
+    }
+    startIdlePreview();
+    return () => { stopIdlePreview(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recState, selectedSource, region, includeWebcam, cameraId]);
+
   // ---- Floating control panel (mini HUD) ----
   // Open once on mount; App.tsx hides/shows it as the user flips tabs,
   // and closes it on app shutdown via the unmount below.
@@ -744,6 +995,15 @@ export default function RecorderTab() {
     setStatus('Preparing…');
 
     try {
+      // Tear down the idle preview compositor + its streams BEFORE
+      // opening the real recording streams. Some OSes reject a
+      // second chromeMediaSource capture of the same source while
+      // the first is still open; stopping the preview first avoids
+      // that race. stopIdlePreview also clears the hidden
+      // screenVideo / webcamVideo srcObjects so the recording path
+      // can reassign them without stale state.
+      await stopIdlePreview();
+
       // 1. Screen stream (+ loopback audio if requested)
       const screenStream = await getScreenStream(selectedSource, includeSystemAudio);
       screenStreamRef.current = screenStream;
@@ -842,14 +1102,12 @@ export default function RecorderTab() {
         });
       }
 
-      // attach canvas to preview host for visual feedback
-      if (previewHostRef.current) {
-        previewHostRef.current.innerHTML = '';
-        comp.canvas.style.width = '100%';
-        comp.canvas.style.height = 'auto';
-        comp.canvas.style.display = 'block';
-        previewHostRef.current.appendChild(comp.canvas);
-      }
+      // The preview display canvas is React-managed and shows the
+      // compositor at 1 fps via the dedicated copy loop (see the
+      // "1 fps display copy loop" effect at the top of this file).
+      // Nothing to attach here — as soon as compositorRef is
+      // assigned above, the next copy-loop tick will start painting
+      // this new compositor onto the preview canvas.
 
       // Bind the capture stream FIRST so the compositor's draw loop has
       // a track to push frames into from the very first draw. The loop
@@ -1411,6 +1669,40 @@ export default function RecorderTab() {
       if ((patch as any).bgImageData !== undefined) setBgImageData((patch as any).bgImageData || undefined);
       if ((patch as any).enabled !== undefined) setIncludeWebcam(!!(patch as any).enabled);
       if ((patch as any).autoCenter !== undefined) setAutoCenter(!!(patch as any).autoCenter);
+    });
+    return off;
+  }, []);
+
+  // Track the floating webcam window as the user drags it around the
+  // desktop. Map its screen position to a normalized (0..1, 0..1)
+  // position inside the recorded frame and push it through the
+  // existing webcamPos state — that in turn fires the "keep compositor
+  // settings live" effect which updates the live preview compositor's
+  // overlay location in real time.
+  //
+  // Mapping: the window's top-left within its host display, normalized
+  // by the room the window has to slide (display size minus window
+  // size). Matches the compositor's overlay-placement math
+  //   cx = round(x * (outWidth - px))
+  //   cy = round(y * (outHeight - px))
+  // so a bubble at the far right of the display lands at webcamPos.x=1,
+  // which draws the overlay with its right edge against the output's
+  // right edge. Clamped to [0, 1] for multi-display edge cases.
+  useEffect(() => {
+    const off = (window as any).api.onWebcamMoved?.((info: {
+      bounds: { x: number; y: number; width: number; height: number };
+      display: { id: string; x: number; y: number; width: number; height: number };
+    }) => {
+      const { bounds: b, display: d } = info;
+      const slideX = Math.max(1, d.width - b.width);
+      const slideY = Math.max(1, d.height - b.height);
+      const nx = Math.max(0, Math.min(1, (b.x - d.x) / slideX));
+      const ny = Math.max(0, Math.min(1, (b.y - d.y) / slideY));
+      setWebcamPos((prev) =>
+        Math.abs(prev.x - nx) < 0.001 && Math.abs(prev.y - ny) < 0.001
+          ? prev
+          : { x: nx, y: ny }
+      );
     });
     return off;
   }, []);
@@ -2272,23 +2564,23 @@ export default function RecorderTab() {
               <div className="row two-col">
                 <label className="row-label">
                   Segmentation <Help>Which model to use for removing your background. Auto picks the highest-quality one your machine can run. Selfie is fastest and most compatible. Multiclass is a newer segmentation model with cleaner hair edges. RVM is real video matting — outputs semi-transparent hair strands, best quality, needs a GPU and downloads a ~15MB model file on first run.</Help>
-                  {segBackendPref === 'auto' && (
-                    <span style={{ opacity: 0.6, fontSize: 11, marginLeft: 6 }}>
-                      {segBackendDetecting ? '(detecting…)' : `→ ${resolvedBackend}`}
-                    </span>
-                  )}
                 </label>
-                <div className="row-ctrl">
+                <div className="row-ctrl" style={{ flexWrap: 'wrap', gap: 4 }}>
                   <select
                     value={segBackendPref}
                     onChange={(e) => setSegBackendPref(e.target.value as 'auto' | SegBackendId)}
-                    style={{ flex: '1 1 100%', minWidth: 160, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
+                    style={{ flex: '1 1 100%', minWidth: 0, background: '#0d1117', color: '#e6edf3', border: '1px solid #262d36', borderRadius: 6, padding: '6px 8px' }}
                   >
                     <option value="auto">Auto (best available)</option>
                     <option value="selfie">Selfie Segmentation (fast)</option>
                     <option value="multiclass">Multiclass Segmenter (better edges)</option>
                     <option value="rvm">RVM Video Matting (best quality, GPU)</option>
                   </select>
+                  {segBackendPref === 'auto' && (
+                    <span style={{ opacity: 0.6, fontSize: 11 }}>
+                      {segBackendDetecting ? 'detecting…' : `using ${resolvedBackend}`}
+                    </span>
+                  )}
                 </div>
               </div>
             </>
@@ -2508,7 +2800,12 @@ export default function RecorderTab() {
         <section className="panel wide">
           <h2>Preview</h2>
           <div className="preview" ref={previewHostRef}>
-            <div className="empty">Preview appears after you press Start recording.</div>
+            <canvas
+              ref={previewDisplayCanvasRef}
+              width={1280}
+              height={720}
+              style={{ width: '100%', height: 'auto', display: 'block' }}
+            />
           </div>
         </section>
       </main>

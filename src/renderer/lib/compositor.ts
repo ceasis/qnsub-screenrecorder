@@ -97,13 +97,14 @@ export class Compositor {
   private targetFps = 30;
   // In-flight guard for the segmenter so it never piles up.
   private segPending = false;
-  // Frame counter used to throttle segmenter inference to every
-  // other frame. At 30fps that's 15fps inference, which is still
-  // plenty fast for face motion and halves the GPU cost. Temporal
-  // mask smoothing already averages the previous and current mask
-  // inside composeSegmented, so the 1-frame lag between inferences
-  // is visually invisible.
-  private segFrameCounter = 0;
+  // Handle for the dedicated async inference loop. Inference is
+  // decoupled from the draw loop so `drawWebcam` can read the most
+  // recent mask synchronously — mirrors the pattern Webcam.tsx uses.
+  // Running process() inline in drawWebcam was causing the recording
+  // path to occasionally miss the mask (the draw read it before the
+  // fire-and-forget process() resolved), which manifested as the
+  // background image / blur not appearing in the recorded MP4.
+  private inferTimer: ReturnType<typeof setTimeout> | null = null;
   // Cached face filter string. Rebuilt only when effect / faceLight /
   // faceBlurPx / autoCenter change (see `rebuildFaceFilter`). Without
   // this, `combinedWebcamFilter` ran on every drawWebcam frame — 30
@@ -150,16 +151,29 @@ export class Compositor {
   // chase a clipped centroid.
   private autoFrame: AutoFrameState = createAutoFrameState();
 
-  constructor(cfg: CompositorConfig, webcamSettings: WebcamSettings) {
+  /**
+   * @param existingSegmenter  Pass an already-initialized segmenter
+   *   from the idle-preview compositor so the recording compositor can
+   *   skip the ~300-500ms WASM + model init phase. If omitted, a fresh
+   *   segmenter is created.
+   */
+  constructor(
+    cfg: CompositorConfig,
+    webcamSettings: WebcamSettings,
+    existingSegmenter?: WebcamSegmenter
+  ) {
     this.cfg = cfg;
     this.webcamSettings = webcamSettings;
-    this.segmenter = new WebcamSegmenter(webcamSettings.segBackend ?? 'selfie');
+    this.segmenter = existingSegmenter ?? new WebcamSegmenter(webcamSettings.segBackend ?? 'selfie');
     this.canvas = document.createElement('canvas');
     this.canvas.width = cfg.outWidth;
     this.canvas.height = cfg.outHeight;
     this.ctx = this.canvas.getContext('2d', { alpha: false })!;
     this.rebuildFaceFilter();
   }
+
+  /** Expose the segmenter so callers can extract and reuse it. */
+  getSegmenter(): WebcamSegmenter { return this.segmenter; }
 
   /**
    * Rebuild the cached CSS filter string used for the face layer:
@@ -253,6 +267,23 @@ export class Compositor {
     } catch (e) {
       console.warn('Segmenter init failed; falling back to raw webcam', e);
     }
+    // Prime the segmentation mask BEFORE the first draw, so the very
+    // first recorded frame already has a valid background composited.
+    // Without this, the first few hundred milliseconds of the
+    // recording fall through to the raw webcam because drawWebcam
+    // reads `getMaskCanvas()` synchronously and inference hasn't
+    // completed yet.
+    try {
+      const wv = this.cfg.webcamVideo;
+      if (wv && wv.readyState >= 2) {
+        await this.segmenter.process(wv);
+      }
+    } catch (e) {
+      console.warn('Segmenter initial process failed', e);
+    }
+    // Kick off the decoupled inference loop that keeps the mask
+    // fresh throughout the recording.
+    this.runInferenceLoop();
     // Draw one initial frame so the canvas isn't black at t=0.
     if (!this.paused) this.drawFrame();
 
@@ -283,6 +314,46 @@ export class Compositor {
     }
   }
 
+  /**
+   * Run the segmenter on its own async loop, independent of the draw
+   * cadence. Target ~16 fps inference — plenty fast for smooth mask
+   * updates, cheap enough to never block the draw thread, and robust
+   * against MediaPipe Selfie Segmentation's ~20-50ms inference time.
+   * Stops automatically when `this.running` goes false or when the
+   * webcam video is gone.
+   */
+  private runInferenceLoop() {
+    const tick = async () => {
+      if (!this.running) return;
+      const video = this.cfg.webcamVideo;
+      const needsMask =
+        this.webcamSettings.bgMode !== 'none' ||
+        this.webcamSettings.autoCenter === true;
+      if (video && needsMask && video.readyState >= 2 && !this.segPending) {
+        this.segPending = true;
+        try {
+          await this.segmenter.process(video);
+        } catch (e) {
+          // Logged inside WebcamSegmenter.process. Keep looping so
+          // a transient failure doesn't stop inference forever.
+        } finally {
+          this.segPending = false;
+        }
+      }
+      if (this.running) {
+        // ~60ms between inferences = ~16fps. Match the floating
+        // webcam window's cadence so the preview and the recording
+        // show the same mask quality.
+        this.inferTimer = setTimeout(tick, 60);
+      }
+    };
+    if (this.inferTimer != null) {
+      clearTimeout(this.inferTimer);
+      this.inferTimer = null;
+    }
+    tick();
+  }
+
   private startFallbackTimer() {
     if (this.timer != null) return;
     const intervalMs = 1000 / Math.max(1, this.targetFps);
@@ -308,6 +379,10 @@ export class Compositor {
     if (this.timer != null) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.inferTimer != null) {
+      clearTimeout(this.inferTimer);
+      this.inferTimer = null;
     }
     if (this.vfcHandle != null) {
       const v = this.cfg.screenVideo as HTMLVideoElement & {
@@ -548,7 +623,7 @@ export class Compositor {
     }
   }
 
-  private async drawWebcam(video: HTMLVideoElement) {
+  private drawWebcam(video: HTMLVideoElement) {
     const { shape, size, x, y, bgMode, bgImage, effect, zoom, offsetX, offsetY, faceLight, autoCenter, bgEffect, bgBlurPx, bgZoom, faceBlurPx } = this.webcamSettings;
     const px = WEBCAM_PX[size];
     const ctx = this.ctx;
@@ -568,23 +643,13 @@ export class Compositor {
     const faceFilterStr = this.cachedFaceFilter;
 
     if (wantSeg) {
-      // Run inference on every other frame. The `segPending` guard
-      // still gates against piling up (if a single inference pass
-      // takes longer than a single frame interval, we keep skipping
-      // until it's done). `getMaskCanvas()` / `getMatted()` return
-      // whatever the last finished inference produced, so the skipped
-      // frames reuse the most recent mask automatically.
-      //
-      // Also gated on `this.running` so a stop() called mid-frame
-      // doesn't kick off a new async process() on a compositor that
-      // was about to close its segmenter.
-      const shouldInfer = this.running && (this.segFrameCounter++ & 1) === 0;
-      if (shouldInfer && !this.segPending) {
-        this.segPending = true;
-        this.segmenter.process(video)
-          .catch(() => {})
-          .finally(() => { this.segPending = false; });
-      }
+      // Inference runs on its own async loop (see `runInferenceLoop`)
+      // that's decoupled from the draw cadence. Here we just read
+      // whatever mask the loop has produced most recently. If the
+      // very first frames of a recording fall through with a null
+      // mask, that's fine — composeSegmented falls back to raw
+      // video for ~50ms until the loop primes the mask, then the
+      // background kicks in for the rest of the recording.
       const mask = this.segmenter.getMaskCanvas();
       const matted = this.segmenter.getMatted();
       if (autoCenter) {

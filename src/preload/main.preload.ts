@@ -114,6 +114,19 @@ const api = {
     ipcRenderer.on('webcam:local-change', l);
     return () => ipcRenderer.removeListener('webcam:local-change', l);
   },
+  // Emitted every time the user drags the floating webcam window on
+  // their desktop. Carries the window's screen bounds + the display
+  // it currently lives on, so the renderer can map to a normalized
+  // position inside the recording frame and update both webcamPos
+  // state and the live compositor's overlay location.
+  onWebcamMoved: (cb: (info: {
+    bounds: { x: number; y: number; width: number; height: number };
+    display: { id: string; x: number; y: number; width: number; height: number };
+  }) => void) => {
+    const l = (_: unknown, info: any) => cb(info);
+    ipcRenderer.on('webcam:moved', l);
+    return () => ipcRenderer.removeListener('webcam:moved', l);
+  },
 
   // Face Blur
   pickBlurVideo: (): Promise<{ path: string; name: string } | null> =>
