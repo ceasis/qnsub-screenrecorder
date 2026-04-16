@@ -39,6 +39,11 @@ export default function App() {
       api.hideWebcamOverlay?.();
       api.hideControlPanel?.();
     }
+    // Let the always-mounted Recorder component know whether it's the
+    // active tab so it can mute/unmute the BG music speaker preview.
+    // The Recorder stays mounted for all tabs (to keep in-progress
+    // recordings alive), so it can't detect visibility on its own.
+    window.dispatchEvent(new CustomEvent('qnsub:tab-changed', { detail: { tab } }));
   }, [tab]);
 
   return (

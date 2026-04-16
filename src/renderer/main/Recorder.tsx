@@ -14,7 +14,7 @@ import { Compositor, WebcamSettings, type TextOverlay, type TextOverlayEffect } 
 import { getMicStream, getWebcamStream, listCameras, listMics, listSpeakers } from '../lib/webcam';
 import { BG_MUSIC_PRESETS, BgMusicPlayer, bgMusicPresetLabel, type BgMusicPreset } from '../lib/bgMusic';
 import { getScreenStream } from '../lib/screen';
-import { Recorder as MR, mixAudioStreams } from '../lib/mediaRecorder';
+import { Recorder as MR, mixAudioStreams, type AudioMixHandle } from '../lib/mediaRecorder';
 import {
   createVoiceChanger,
   VOICE_PRESETS,
@@ -548,6 +548,11 @@ export default function RecorderTab() {
   const webcamStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const voiceChangerRef = useRef<VoiceChangerHandle | null>(null);
+  // Handle to the audio mixer's AudioContext so cleanup() can close
+  // it. Without this, each recording leaks an AudioContext (and its
+  // real-time audio thread), and after 3-4 recordings the system runs
+  // out of threads — causing later recordings to become jittery.
+  const audioMixerRef = useRef<AudioMixHandle | null>(null);
   // Live voice-changer preview used when the user is idle and picks
   // a preset — they hear their own voice through the chosen speaker
   // so they can dial in the effect without having to start a
@@ -600,6 +605,13 @@ export default function RecorderTab() {
       } catch (e: any) {
         setStatus('Failed to load sources: ' + e.message);
       }
+      // Signal the main process that the UI is fully mounted and the
+      // initial data (source thumbnails, camera list, mic list, save
+      // folder) has loaded. The splash screen waits for this before
+      // closing, so the user never sees a half-loaded Recorder tab.
+      try {
+        (window as any).api?.signalUiReady?.();
+      } catch {}
     })();
   }, []);
 
@@ -695,8 +707,19 @@ export default function RecorderTab() {
   // recording) onto the preview display canvas. Decouples the
   // preview's repaint rate from the compositor's internal fps so
   // the panel stays light even during a 30 fps recording.
+  //
+  // IMPORTANT: the copy is SKIPPED while actively recording or
+  // paused. Reading a 1920×1080 compositor canvas with drawImage
+  // forces a GPU pipeline flush that stalls adjacent drawFrame
+  // calls, introducing visible jitter in the recorded output.
+  // The preview panel freezes on the last idle-preview frame during
+  // recording — the user is watching their screen, not the preview.
+  const recStateForCopyRef = useRef(recState);
+  recStateForCopyRef.current = recState;
   useEffect(() => {
     const id = setInterval(() => {
+      // Skip during recording / paused / finalizing to avoid GPU stalls.
+      if (recStateForCopyRef.current !== 'idle') return;
       const display = previewDisplayCanvasRef.current;
       const comp = compositorRef.current;
       if (!display || !comp) return;
@@ -852,14 +875,19 @@ export default function RecorderTab() {
         return;
       }
 
-      // 3. Build a compositor at 1280×720. Same settings the real
-      //    recording would use — the Compositor class is agnostic
-      //    about the output resolution, so every face light / bg
-      //    blur / effect etc. renders identically.
+      // 3. Build a compositor at 1280×720. The idle preview
+      //    deliberately skips segmentation (bgMode forced to 'none',
+      //    autoCenter off) so only ONE MediaPipe segmenter runs at a
+      //    time — the floating webcam bubble's. Running two segmenters
+      //    concurrently on the same GPU causes WebGL context contention
+      //    that intermittently breaks the bubble's background
+      //    replacement. The user already sees the segmented webcam in
+      //    the floating bubble; the preview panel just needs the
+      //    screen + raw webcam overlay to show layout/position.
       const webcamSettings: WebcamSettings = {
         shape: snap.shape,
         size: snap.size,
-        bgMode: snap.bgMode,
+        bgMode: 'none',           // no segmentation in idle preview
         effect: snap.effect,
         zoom: snap.zoom,
         offsetX: snap.offsetX,
@@ -867,12 +895,12 @@ export default function RecorderTab() {
         faceLight: snap.faceLight,
         x: snap.webcamPos.x,
         y: snap.webcamPos.y,
-        bgImage: bgImageRef.current,
-        autoCenter: snap.autoCenter,
+        bgImage: null,
+        autoCenter: false,        // needs segmenter — skip in preview
         segBackend: snap.resolvedBackend,
-        bgEffect: snap.bgEffect,
-        bgBlurPx: snap.bgBlurPx,
-        bgZoom: snap.bgZoom,
+        bgEffect: 'none' as any,
+        bgBlurPx: 0,
+        bgZoom: 1,
         faceBlurPx: snap.faceBlurPx
       };
       const comp = new Compositor(
@@ -987,11 +1015,15 @@ export default function RecorderTab() {
     await window.api.openRegion();
   }
 
+  const startingRef = useRef(false);
+
   async function startRecording() {
+    if (startingRef.current) return; // prevent double-click
     if (!selectedSource) {
       setStatus('Pick a screen first');
       return;
     }
+    startingRef.current = true;
     setStatus('Preparing…');
 
     try {
@@ -999,9 +1031,7 @@ export default function RecorderTab() {
       // opening the real recording streams. Some OSes reject a
       // second chromeMediaSource capture of the same source while
       // the first is still open; stopping the preview first avoids
-      // that race. stopIdlePreview also clears the hidden
-      // screenVideo / webcamVideo srcObjects so the recording path
-      // can reassign them without stale state.
+      // that race.
       await stopIdlePreview();
 
       // 1. Screen stream (+ loopback audio if requested)
@@ -1133,11 +1163,12 @@ export default function RecorderTab() {
       if (bgMusicPlayerRef.current && bgMusicPreset !== 'off') {
         audioStreams.push(bgMusicPlayerRef.current.stream);
       }
-      const mixed = audioStreams.length > 0 ? mixAudioStreams(audioStreams) : null;
+      const mixHandle = audioStreams.length > 0 ? mixAudioStreams(audioStreams) : null;
+      audioMixerRef.current = mixHandle;
 
       // 6. Build recording stream
       const tracks: MediaStreamTrack[] = [videoTrack];
-      if (mixed) tracks.push(...mixed.getAudioTracks());
+      if (mixHandle) tracks.push(...mixHandle.stream.getAudioTracks());
       const recStream = new MediaStream(tracks);
 
       // Seed cursor-zoom state + start the main-process cursor tracker.
@@ -1154,34 +1185,36 @@ export default function RecorderTab() {
         });
       }
 
-      // 7. Countdown — skip entirely if the user set duration to 0.
-      if (countdownSeconds > 0) {
-        setStatus('Get ready…');
-        await window.api.showCountdown({ seconds: countdownSeconds, style: countdownStyle });
-      }
+      // 7-9. Countdown + ffmpeg spawn + annotation overlay in PARALLEL.
+      // The countdown is user-facing (3-2-1 display), the ffmpeg spawn
+      // is a backend child-process init, and the annotation overlay is
+      // an IPC window-create. None depend on each other so running
+      // them concurrently shaves ~100-300ms off the preparation phase.
+      streamSessionRef.current = null;
+      streamFailedRef.current = false;
+      {
+        const countdownP = countdownSeconds > 0
+          ? (setStatus('Get ready…'), window.api.showCountdown({ seconds: countdownSeconds, style: countdownStyle }))
+          : Promise.resolve();
+        const streamP = window.api.streamStart({ folder: saveFolder, fps: outputFps }).catch(() => null);
+        const annotationP = window.api.openAnnotation();
 
-      // 9. Annotation overlay
-      await window.api.openAnnotation();
+        const [, ssResult] = await Promise.all([countdownP, streamP, annotationP]);
+        if (ssResult?.ok && ssResult.sessionId) {
+          streamSessionRef.current = ssResult.sessionId;
+        }
+      }
       window.api.setAnnotationColor(color);
       window.api.setAnnotationThickness(annThickness);
       window.api.setAnnotationOutline(annOutline);
       window.api.setAnnotationStyle(annStyle);
 
-      // 9. Start recording.
-      // Spin up the parallel ffmpeg pipeline first so chunks can stream
-      // into it as soon as MediaRecorder produces them. If anything
-      // fails (ffmpeg missing, mkdir error, etc.) we silently fall back
-      // to the buffered save path — the recording itself still works.
-      streamSessionRef.current = null;
-      streamFailedRef.current = false;
-      try {
-        const ss = await window.api.streamStart({ folder: saveFolder, fps: outputFps });
-        if (ss?.ok && ss.sessionId) {
-          streamSessionRef.current = ss.sessionId;
-        }
-      } catch {
-        // ignore — streaming optional
-      }
+      // Tell the floating webcam window to stop running its own
+      // segmenter so the GPU isn't saturated with two concurrent
+      // MediaPipe instances (~90 inferences/sec). The bubble shows
+      // raw camera during recording; background replacement is
+      // handled by the recording compositor.
+      (window as any).api.setWebcamRecordingState?.(true);
 
       const rec = new MR();
       const sid = streamSessionRef.current;
@@ -1205,6 +1238,8 @@ export default function RecorderTab() {
       setStatus('Error: ' + e.message);
       window.api.showError('Failed to start recording: ' + e.message);
       cleanup();
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -1277,6 +1312,12 @@ export default function RecorderTab() {
       offProgress();
       cleanup();
       setRecState('idle');
+      // Mute the BG music speaker preview immediately so the user
+      // doesn't hear it playing over the recorded video in the Player
+      // tab (which the app auto-switches to after saving). The
+      // tab-changed event listener also mutes it, but there's a
+      // render-cycle delay; this explicit call is instant.
+      bgMusicPlayerRef.current?.setMonitor(false);
       // Reset the HUD back to idle.
       (window as any).api.sendControlState?.({ recState: 'idle', elapsedSec: 0 });
     }
@@ -1285,12 +1326,31 @@ export default function RecorderTab() {
   function cleanup() {
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     webcamStreamRef.current?.getTracks().forEach((t) => t.stop());
-    try { voiceChangerRef.current?.close(); } catch {}
-    voiceChangerRef.current = null;
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current = null;
     webcamStreamRef.current = null;
     micStreamRef.current = null;
+
+    try { voiceChangerRef.current?.close(); } catch {}
+    voiceChangerRef.current = null;
+
+    // Close the audio mixer's AudioContext so its real-time audio
+    // thread is released. Without this, each recording leaks an
+    // AudioContext and after 3-4 cycles the system runs out of
+    // real-time threads, causing jitter in later recordings.
+    try { audioMixerRef.current?.close(); } catch {}
+    audioMixerRef.current = null;
+
+    // Null out the compositor and recorder refs so their backing
+    // objects (canvas, segmenter, MediaRecorder, capture track) are
+    // eligible for GC instead of pinned until the next recording
+    // replaces them.
+    compositorRef.current = null;
+    recorderRef.current = null;
+
+    // Resume the floating webcam window's own segmenter now that the
+    // recording compositor is gone and the GPU is free.
+    (window as any).api.setWebcamRecordingState?.(false);
   }
 
   // Keep compositor settings live while recording
@@ -1597,6 +1657,21 @@ export default function RecorderTab() {
     };
   }, []);
 
+  // Mute the BG music speaker preview when the user leaves the
+  // Recorder tab (e.g. switches to Player to watch a recording) so
+  // the music doesn't play over the video playback. The recorder's
+  // mix stream (for the recorded MP4) is unaffected — only the
+  // monitor output to the user's speakers is toggled. When the user
+  // returns to the Recorder tab, the monitor resumes automatically.
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const { tab } = (e as CustomEvent<{ tab: string }>).detail;
+      bgMusicPlayerRef.current?.setMonitor(tab === 'recorder');
+    };
+    window.addEventListener('qnsub:tab-changed', onTab);
+    return () => window.removeEventListener('qnsub:tab-changed', onTab);
+  }, []);
+
   // Live voice preview while idle. Runs whenever the user has mic
   // enabled and picks a non-"off" preset, so they can hear the
   // effect before starting a recording. Stops the moment recording
@@ -1762,7 +1837,7 @@ export default function RecorderTab() {
         <span className="shortcut">Pause <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd></span>
         <div className="header-actions">
           {recState === 'idle' && (
-            <button className="success big" onClick={startRecording}>● Start recording</button>
+            <button className="success big" disabled={startingRef.current} onClick={startRecording}>● Start recording</button>
           )}
           {recState !== 'idle' && (
             <>

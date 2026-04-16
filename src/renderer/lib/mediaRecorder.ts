@@ -88,7 +88,15 @@ export class Recorder {
   }
 }
 
-export function mixAudioStreams(streams: MediaStream[]): MediaStream {
+export type AudioMixHandle = {
+  stream: MediaStream;
+  /** Close the internal AudioContext. Call on recording cleanup so the
+   *  real-time audio thread is released back to the OS. Leaking these
+   *  causes later recordings to become jittery after 3-4 cycles. */
+  close: () => void;
+};
+
+export function mixAudioStreams(streams: MediaStream[]): AudioMixHandle {
   const ctx = new AudioContext();
   const dest = ctx.createMediaStreamDestination();
   for (const s of streams) {
@@ -96,5 +104,8 @@ export function mixAudioStreams(streams: MediaStream[]): MediaStream {
     const src = ctx.createMediaStreamSource(s);
     src.connect(dest);
   }
-  return dest.stream;
+  return {
+    stream: dest.stream,
+    close: () => { ctx.close().catch(() => {}); }
+  };
 }

@@ -77,6 +77,7 @@ const api = {
   showError: (msg: string) => ipcRenderer.invoke('dialog:error', msg),
   toggleDevTools: () => ipcRenderer.invoke('devtools:toggle'),
   quitApp: () => ipcRenderer.invoke('app:quit'),
+  signalUiReady: () => ipcRenderer.send('app:ui-ready'),
 
   toggleIdiotBoard: () => ipcRenderer.invoke('idiotboard:toggle'),
   closeIdiotBoard: () => ipcRenderer.invoke('idiotboard:close'),
@@ -119,6 +120,9 @@ const api = {
   // it currently lives on, so the renderer can map to a normalized
   // position inside the recording frame and update both webcamPos
   // state and the live compositor's overlay location.
+  setWebcamRecordingState: (recording: boolean) =>
+    ipcRenderer.send('webcam:recording-state', recording),
+
   onWebcamMoved: (cb: (info: {
     bounds: { x: number; y: number; width: number; height: number };
     display: { id: string; x: number; y: number; width: number; height: number };

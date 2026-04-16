@@ -385,6 +385,16 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null) {
     }
   });
 
+  // Tell the webcam window to pause/resume its own segmenter so the
+  // GPU isn't running two concurrent MediaPipe instances during
+  // recording. The webcam bubble shows raw camera while recording;
+  // background replacement is handled by the main window's compositor.
+  ipcMain.on('webcam:recording-state', (_e, recording: boolean) => {
+    if (webcamWin && !webcamWin.isDestroyed()) {
+      webcamWin.webContents.send('webcam:recording-state', recording);
+    }
+  });
+
   // HUD button → forward to main window as the authoritative recorder
   // lives there.
   ipcMain.on('control:command', (_e, action: 'start' | 'pause' | 'stop') => {

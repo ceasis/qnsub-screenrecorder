@@ -109,6 +109,11 @@ export default function WebcamOverlay() {
 
   const [cfg, setCfg] = useState<Config>(DEFAULT_CFG);
   const cfgRef = useRef<Config>(DEFAULT_CFG);
+  // When true, the main window is actively recording and its
+  // compositor owns the GPU for segmentation. We skip our own
+  // segmenter.process() so the two instances don't contend for
+  // WebGL resources (~90 inferences/sec would saturate any GPU).
+  const recordingActiveRef = useRef(false);
   // Stateful auto-framing filter. See lib/autoFrame.ts for the rationale
   // behind the smoothing, dead-zone, confidence gate, and step cap.
   const autoFrameRef = useRef(createAutoFrameState());
@@ -129,6 +134,17 @@ export default function WebcamOverlay() {
       setCtrlElapsed(s.elapsedSec);
       if (typeof s.finalizingPct === 'number') setCtrlPct(s.finalizingPct);
       else if (s.recState !== 'finalizing') setCtrlPct(0);
+    });
+    return off;
+  }, []);
+
+  // Pause our own segmenter while the main window is recording so the
+  // GPU isn't running ~90 MediaPipe inferences/sec (60 here + 30 in
+  // the compositor). The bubble shows raw camera during recording;
+  // background replacement is handled by the recording compositor.
+  useEffect(() => {
+    const off = (window.webcamApi as any).onRecordingState?.((recording: boolean) => {
+      recordingActiveRef.current = recording;
     });
     return off;
   }, []);
@@ -306,7 +322,10 @@ export default function WebcamOverlay() {
 
         // Run the segmenter when we need it for compositing OR when
         // auto-center is on (since the centroid comes from the mask).
-        const wantSeg = cur.bgMode !== 'none' || cur.autoCenter === true;
+        // SKIP entirely while the main window is recording so the GPU
+        // isn't saturated with two concurrent segmenters.
+        const wantSeg = (cur.bgMode !== 'none' || cur.autoCenter === true)
+          && !recordingActiveRef.current;
         let src: CanvasImageSource = v;
         if (wantSeg && segRef.current) {
           await segRef.current.process(v);

@@ -404,12 +404,11 @@ export function createMainWindow(): BrowserWindow {
     }
   });
 
-  // Maximise before the first paint so the user never sees the
-  // 1100×760 "restore size" flash, then show the window.
-  win.once('ready-to-show', () => {
-    win.maximize();
-    win.show();
-  });
+  // The window starts hidden (`show: false`). bootstrap() in main.ts
+  // waits for both `ready-to-show` AND the renderer's `app:ui-ready`
+  // IPC before calling maximize() + show(). This keeps the splash
+  // visible until the React UI is fully interactive — no flash of
+  // empty/loading content.
 
   // Route `<a target="_blank">` clicks (help modal, support links, etc.)
   // to the user's default browser instead of opening a second Electron

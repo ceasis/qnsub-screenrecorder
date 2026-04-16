@@ -43,6 +43,15 @@ contextBridge.exposeInMainWorld('webcamApi', {
     ipcRenderer.on('control:state', l);
     return () => ipcRenderer.removeListener('control:state', l);
   },
+  // When true, the bubble skips its own segmenter inference to free
+  // the GPU for the recording compositor's segmenter. The bubble
+  // falls back to showing the raw camera feed during recording.
+  onRecordingState: (cb: (recording: boolean) => void) => {
+    const l = (_: unknown, r: boolean) => cb(r);
+    ipcRenderer.on('webcam:recording-state', l);
+    return () => ipcRenderer.removeListener('webcam:recording-state', l);
+  },
+
   ctrlStart: () => ipcRenderer.send('control:command', 'start'),
   ctrlPauseToggle: () => ipcRenderer.send('control:command', 'pause'),
   ctrlStop: () => ipcRenderer.send('control:command', 'stop'),

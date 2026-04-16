@@ -127,9 +127,14 @@ function createTray() {
 
 function bootstrap() {
   // Splash first so the user sees something immediately while the
-  // main window's renderer bundles, React boots, and localStorage
-  // rehydrates. The splash is closed in the main window's
-  // `ready-to-show` handler (see below).
+  // main window's renderer bundles, React boots, source thumbnails
+  // load, and the segmenter initialises. The splash is closed only
+  // once BOTH conditions are met:
+  //   1. The main window's native frame is ready (`ready-to-show`)
+  //   2. The renderer reports its UI is fully mounted (`app:ui-ready`)
+  // A minimum visible time of 5 seconds is enforced so the user has
+  // time to read the brand / links. On slower machines the splash
+  // stays up as long as the longest of the three gates requires.
   const splashWin = createSplashWindow();
   const splashShownAt = Date.now();
 
@@ -138,28 +143,62 @@ function bootstrap() {
   registerShortcuts(() => mainWindow);
   createTray();
 
-  // Close the splash once the main window is actually painted.
-  // Minimum visible time is 5 seconds so the user has time to read
-  // the brand + "100% open source" + GitHub URL + Twitter handle
-  // — and to click through if they want. On slower machines the
-  // splash stays up as long as the main window needs to boot.
-  const MIN_SPLASH_MS = 5000;
-  mainWindow.once('ready-to-show', () => {
+  const MIN_SPLASH_MS = 10000;
+  let windowReady = false;
+  let uiReady = false;
+
+  function tryFinishSplash() {
+    if (!windowReady || !uiReady) return;
     const elapsed = Date.now() - splashShownAt;
     const wait = Math.max(0, MIN_SPLASH_MS - elapsed);
     setTimeout(() => {
       try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.maximize();
+          mainWindow.show();
+        }
+      } catch {}
+      try {
         if (!splashWin.isDestroyed()) splashWin.close();
       } catch {}
     }, wait);
+  }
+
+  // Gate 1: the Electron BrowserWindow has painted its first frame.
+  // We do NOT show the window here — tryFinishSplash will show it
+  // once the renderer is also ready.
+  mainWindow.once('ready-to-show', () => {
+    windowReady = true;
+    tryFinishSplash();
   });
-  // Also close the splash if the main window errors out during load
-  // so we don't leave an orphan splash on the user's screen.
+
+  // Gate 2: the renderer's React tree has mounted, initial data
+  // (source thumbnails, camera list, etc.) has loaded, and the idle
+  // preview compositor has started — i.e. the UI the user sees is
+  // fully interactive. Sent from App.tsx or Recorder.tsx via IPC.
+  ipcMain.once('app:ui-ready', () => {
+    uiReady = true;
+    tryFinishSplash();
+  });
+
+  // Safety net: if the main window errors out during load, close the
+  // splash so we don't leave an orphan on the user's screen.
   mainWindow.webContents.once('did-fail-load', () => {
     try {
       if (!splashWin.isDestroyed()) splashWin.close();
     } catch {}
   });
+
+  // Timeout safety: if the renderer never sends `app:ui-ready`
+  // (crash, infinite loop, etc.), force-close the splash after
+  // 15 seconds so the user isn't stuck staring at it forever.
+  setTimeout(() => {
+    if (!uiReady) {
+      uiReady = true;
+      windowReady = true;
+      tryFinishSplash();
+    }
+  }, 15000);
 
   // Intercept the close event so the X just hides the window. The user
   // can quit explicitly via the in-app Quit button or the tray menu.
